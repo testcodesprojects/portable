@@ -94,12 +94,26 @@ jobs:
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then
             source /opt/intel/oneapi/setvars.sh || true
-            make dist MARCH=avx2                       # portable x86_64
+            MAKEARGS="MARCH=avx2"                       # portable x86_64
           elif [ "${{ matrix.arch }}" = "arm64" ]; then
-            make dist USE_LIBXSMM=0                    # Apple Silicon (-mcpu=apple-m1)
+            MAKEARGS="USE_LIBXSMM=0"                    # Apple Silicon (-mcpu=apple-m1)
           else
-            make dist MARCH=avx2 USE_LIBXSMM=0         # Intel Mac
+            MAKEARGS="MARCH=avx2 USE_LIBXSMM=0"         # Intel Mac
           fi
+          # Capture the full (very verbose) build to a file; on failure surface
+          # ONLY the errors + tail so the CI log stays short and readable
+          # (make echoes every ~2 KB compile command, which otherwise buries the
+          # actual error past the log size limit).
+          if ! make dist $MAKEARGS > build.log 2>&1; then
+            echo "::group::❌ Errors"
+            grep -nE "error:|fatal error:| Error [0-9]+|undefined (symbols?|reference)|ld: |Undefined symbol" build.log || true
+            echo "::endgroup::"
+            echo "::group::Last 40 lines of build.log"
+            tail -40 build.log
+            echo "::endgroup::"
+            exit 1
+          fi
+          tail -3 build.log
 
       - name: Sanity check the built library
         run: |

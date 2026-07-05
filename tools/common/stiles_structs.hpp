@@ -94,7 +94,7 @@ namespace sTiles {
 /** ****************************************************************************
  * Structure representing a matrix tile (safemode storage)
  ******************************************************************************/
-typedef struct {
+typedef struct DenseTileSafeMode {
     int row, col;       /**< Row and column indices of the tile */
     int width, height;  /**< Dimensions of the tile */
     double *elements;   /**< Pointer to the tile's data */
@@ -103,7 +103,7 @@ typedef struct {
 /** ****************************************************************************
  * Structure representing a matrix tile for GPU
  ******************************************************************************/
-typedef struct {
+typedef struct DenseGpuTile {
     int width, height;  /**< Dimensions of the tile */
     double *x;  // Pointer to a 2D array
 } DenseGpuTile;
@@ -111,7 +111,7 @@ typedef struct {
 /** ****************************************************************************
  * Structure representing a configuration for specific solution types
  ******************************************************************************/
-typedef struct {
+typedef struct SolveTrickConfig {
     int **trick_data;       /**< Pointer to solution tricks */
     int *trick_sizes;   /**< Sizes of solution tricks */
     int chunk_num;
@@ -220,7 +220,7 @@ typedef struct stiles_desc_t {
 /** ****************************************************************************
  * Structure defining the main sTiles computational scheme
  ******************************************************************************/
-typedef struct {
+typedef struct TiledMatrix {
     int dim;                       /**< Number of rows/columns */
     int nnz;                     /**< Number of non-zeros */
     int original_order;              /**< Original matrix row/column count */
@@ -712,7 +712,7 @@ inline const std::vector<int>& get_gpu_solve_bwd_offsets(const TiledMatrix* tm) 
 
 } // namespace sTiles
 
-typedef struct {
+typedef struct sTiles_call {
 
     int global_index;
     int call_index;   // Index of the call within the group
@@ -745,7 +745,7 @@ typedef struct {
 
 } sTiles_call;
 
-typedef struct {
+typedef struct sTiles_group {
 
     int group_index;      // Index of the group
     int group_offset;      // Index of the group
@@ -761,7 +761,7 @@ struct sTiles_Global_Pool {
 };
 
 
-typedef struct {
+typedef struct sTiles_object {
 
     //global parameters:
     unsigned int magic;

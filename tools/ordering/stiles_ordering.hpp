@@ -1881,6 +1881,21 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
             }
         }
 
+        // Skip capturing SCOTCH's separator tree on macOS/arm64. SCOTCH's tree-OUTPUT
+        // path corrupts the heap there: AddressSanitizer shows SCOTCH_graphExit freeing
+        // the caller's treetab buffer (bad-free, +1 int; a BUS garbage-read without a
+        // context) on spacetime. The tree is ONLY an optional accelerator for the
+        // tree-reduction step, never needed for the SCOTCH ordering itself, so we drop
+        // it on macOS and SCOTCH ordering runs normally. On x86 the same over-free is
+        // silently tolerated (Valgrind/ASan clean), so Linux keeps the tree. Env
+        // STILES_NO_SCOTCH_TREE=1 forces the skip on any platform (to test on Linux).
+        bool skip_scotch_tree = false;
+#if defined(__APPLE__)
+        skip_scotch_tree = true;
+#endif
+        if (const char* _e = std::getenv("STILES_NO_SCOTCH_TREE"))
+            if (std::atoi(_e) == 1) skip_scotch_tree = true;
+
         // Graveyard: timed-out futures stay alive until end of this block so their
         // destructor doesn't block immediately (they are awaited when the graveyard
         // goes out of scope, after results have already been collected).
@@ -1923,7 +1938,8 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
 
                 // Capture SCOTCH separator tree for the winner-installation step
                 // (only meaningful for SCOTCH variants 4/41/42; ignored for others).
-                ScotchTree* tree_arg = (res.id == 4 || res.id == 41 || res.id == 42)
+                // skip_scotch_tree drops it on macOS (arm64 SCOTCH tree-output heap bug).
+                ScotchTree* tree_arg = (!skip_scotch_tree && (res.id == 4 || res.id == 41 || res.id == 42))
                                      ? &res.saved_tree : nullptr;
 
                 res.status = sTiles::run_permutation(
@@ -2210,7 +2226,7 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
         std::vector<Candidate> candidates;
         for (const auto& r : ord_results) {
             if (r.active >= 0 && r.filled >= 0 && !r.saved_perm.empty()) {
-                const ScotchTree* tp = (r.id == 4 || r.id == 41 || r.id == 42)
+                const ScotchTree* tp = (!skip_scotch_tree && (r.id == 4 || r.id == 41 || r.id == 42))
                                      ? &r.saved_tree : nullptr;
                 candidates.push_back({&r.saved_perm, r.name, r.active + r.filled, tp, r.id});
             }

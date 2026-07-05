@@ -66,7 +66,10 @@ EXTERN_OBJS += $(SS_C_OBJS) $(SS_F_OBJS)
 
 # Same arch/opt/LTO as every other sTiles object; AMD/COLAMD are
 # integer-deterministic so opt level cannot change the ordering.
-SS_CFLAGS := $(OPT_FLAGS) -fPIC -std=gnu11 $(OPENMP_FLAGS) $(SUITESPARSE_INC)
+# OPENMP_INC is needed on macOS: SuiteSparse_config.h pulls in <omp.h> under
+# -fopenmp, and clang's -Xpreprocessor -fopenmp does NOT add the libomp include
+# path (Homebrew /opt/homebrew/opt/libomp/include). Empty on Linux.
+SS_CFLAGS := $(OPT_FLAGS) -fPIC -std=gnu11 $(OPENMP_FLAGS) $(OPENMP_INC) $(SUITESPARSE_INC)
 
 vpath %.c $(SS_ROOT)/SuiteSparse_config $(SS_ROOT)/AMD/Source \
           $(SS_ROOT)/CAMD/Source $(SS_ROOT)/COLAMD/Source \

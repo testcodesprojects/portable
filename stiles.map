@@ -1,0 +1,182 @@
+###############################################################################
+# Linker version script for libstiles.so
+#
+# Defines the *exact* set of symbols exported from libstiles.so. Everything
+# else — internal C++ symbols, embedded MKL, SCOTCH, METIS, SuiteSparse,
+# libxsmm, gfortran/OMP runtime — becomes local and cannot be reached or
+# rebound by the dynamic loader.
+#
+# This is the contract that prevents symbol clashes when libstiles.so is
+# loaded into a process that already has its own MKL with a different
+# threading layer (e.g. INLA built with mkl_gnu_thread).
+#
+# Maintenance: when adding a new public sTiles_* function in tools/include/
+# stiles.h, add it here too. Symbols listed here that don't exist in the
+# library are silently ignored by the linker (no warning), so the only
+# failure mode is "I added a public API but forgot to export it" — which
+# manifests as an undefined-symbol error in the consumer at link time.
+###############################################################################
+
+{
+    global:
+        # ---- Versioning / logging ----
+        sTiles_get_version;
+        sTiles_print_version;
+        sTiles_set_log_level;
+
+        # ---- Tile size ----
+        sTiles_set_tile_size;
+        sTiles_return_tile_size;
+        sTiles_get_auto_tile_size;
+
+        # ---- Control parameters ----
+        sTiles_set_control_param;
+        sTiles_get_control_param;
+        sTiles_get_param_description;
+        sTiles_reset_control_param;
+        sTiles_reset_all_params;
+        sTiles_set_params;
+        sTiles_get_all_params;
+        sTiles_print_params;
+
+        # ---- Ordering / partitioning configuration ----
+        sTiles_set_ordering_mode;
+        sTiles_set_tile_ordering_mode;
+        sTiles_set_tile_first_ordering_mode;
+        sTiles_set_tile_ordering_size;
+        sTiles_set_tile_ordering_min_dim;
+        sTiles_set_correction_mode;
+        sTiles_set_tile_type_mode;
+        sTiles_force_ND;
+        sTiles_set_force_scotch_ordering;
+        sTiles_get_force_scotch_ordering;
+        sTiles_set_scotch_padding;
+        sTiles_get_scotch_padding;
+        sTiles_set_path2_depth;
+        sTiles_get_path2_depth;
+        sTiles_set_neighbor_lookup_method;
+        sTiles_get_neighbor_lookup_method;
+        sTiles_set_user_permutation;
+        sTiles_clear_user_permutation;
+        sTiles_clear_all_user_permutations;
+        sTiles_set_partition_sizes;
+        sTiles_clear_partition_sizes;
+        sTiles_get_partition_sizes;
+
+        # ---- Inverse storage / OMP / semisparse ----
+        sTiles_set_inverse_storage_mode;
+        sTiles_get_inverse_storage_mode;
+        sTiles_set_use_omp;
+        sTiles_get_use_omp;
+        sTiles_set_semisparse_impl;
+        sTiles_get_semisparse_impl;
+
+        # ---- Reserved / forward-declared (may be added later) ----
+        sTiles_set_auto_picker;
+        sTiles_get_auto_picker;
+        sTiles_set_inla_picker;
+        sTiles_get_inla_picker;
+        sTiles_set_solve_refinement;
+        sTiles_get_solve_refinement;
+
+        # ---- Serial / memory / bandwidth ----
+        sTiles_set_serial_mode;
+        sTiles_get_serial_mode;
+        sTiles_set_memory_estimate;
+        sTiles_get_memory_estimate;
+        sTiles_set_bw_mode;
+        sTiles_get_bw_mode;
+
+        # ---- Tree-reduction path global enable ----
+        sTiles_set_tree_path_enable;
+        sTiles_get_tree_path_enable;
+        # ---- Tree-reduction path force (bypass gate) ----
+        sTiles_set_tree_path_force;
+        sTiles_get_tree_path_force;
+
+        # ---- Diagnostics / IO ----
+        sTiles_set_dense_export_file;
+        sTiles_get_dense_export_file;
+        sTiles_set_rescale_cores;
+
+        # ---- GPU ----
+        sTiles_get_num_gpus;
+        sTiles_use_gpu;
+        sTiles_get_gpu_enabled;
+        sTiles_set_gpu_for_call;
+        sTiles_is_using_gpu;
+
+        # ---- Lifecycle ----
+        sTiles_create;
+        sTiles_create_expert;
+        sTiles_init;
+        sTiles_init_group;
+        sTiles_map_group_call_to_group_call;
+        sTiles_assign_graph;
+        sTiles_assign_graph_one_call;
+        sTiles_assign_values;
+        sTiles_bind;
+        sTiles_unbind;
+        sTiles_freeGroup;
+        sTiles_quit;
+
+        # ---- Numeric kernels ----
+        sTiles_chol;
+        sTiles_selinv;
+        sTiles_parallel_exec;
+        sTiles_rescale_cores;
+        sTiles_turn_on_rescale;
+        sTiles_turn_off_rescale;
+
+        # ---- Solve ----
+        sTiles_solve_LLT;
+        sTiles_solve_L;
+        sTiles_solve_LT;
+        sTiles_solve_LLT_rescale;
+        sTiles_solve_L_rescale;
+        sTiles_solve_LT_rescale;
+
+        # ---- Result accessors ----
+        sTiles_get_selinv_elm;
+        sTiles_get_selinv_row;
+        sTiles_get_chol_elm;
+        sTiles_clear_selinv;
+        sTiles_return_perm_vec;
+        sTiles_return_iperm_vec;
+        sTiles_get_num_calls;
+        sTiles_get_nnz_factor;
+        sTiles_get_element_perm;
+        sTiles_get_element_perm_length;
+        sTiles_get_logical_element_perm;
+        sTiles_get_logdet;
+
+        # ---- Timing / debug ----
+        sTiles_get_chol_timing;
+        sTiles_get_selinv_timing;
+        sTiles_print_chol_timings;
+        sTiles_print_selinv_timings;
+        sTiles_print_logdets;
+        sTiles_debug_matrix;
+        sTiles_expert_user;
+
+        # ---- Memory ----
+        sTiles_GetGroupMemoryUsage;
+        sTiles_GetGroupsMemoryUsage;
+        sTiles_check;
+        sTiles_estimate_memory;
+        sTiles_estimate_memory_verbose;
+        sTiles_memory_fits;
+
+        # ---- CSC fast-path packing ----
+        sTiles_packing;
+        sTiles_unpacking;
+        sTiles_bench_csc_layouts;
+        sTiles_get_L_values;
+        sTiles_set_pack_cache_threshold_bytes;
+        sTiles_get_pack_cache_threshold_bytes;
+
+    local:
+        # Hide everything else (internal C++ symbols, embedded MKL, SCOTCH,
+        # METIS, SuiteSparse, libxsmm, gfortran/OMP runtime).
+        *;
+};

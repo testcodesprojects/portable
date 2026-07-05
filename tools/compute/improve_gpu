@@ -1,0 +1,385 @@
+inline void dpotrf_greentree_boosted_101_gpu(stiles_context_t *stile)
+{
+    int uplo;
+    TilesDescriptor A;
+    STILES_sequence *sequence;
+    STILES_request  *request;
+
+    stiles_unpack_args_4(uplo, A, sequence, request);
+    (void)uplo; // silence unused (we always use UPPER below)
+
+    // If the sequence has already failed/been canceled, bail out early:
+    if (sequence->status != 0) {
+        return;
+    }
+
+    const int rank = STILES_RANK;
+    cudaSetDevice(A.GPU_ID);
+    cudaStream_t stream = A.streams[rank];
+
+    // cuSOLVER / cuBLAS setup
+    cusolverDnHandle_t cusolverH = NULL;
+    cublasHandle_t     cublasH   = NULL;
+
+    CHECK_CUSOLVER(cusolverDnCreate(&cusolverH));
+    cublasCreate(&cublasH);
+
+    CHECK_CUSOLVER(cusolverDnSetStream(cusolverH, stream));
+    cublasSetStream(cublasH, stream);
+    cublasSetPointerMode(cublasH, CUBLAS_POINTER_MODE_HOST); // make intent explicit
+
+    // Workspace & devInfo for POTRF
+    int workspace_size = 0;        // Lwork (in number of doubles for legacy potrf)
+    CHECK_CUSOLVER(cusolverDnDpotrf_bufferSize(
+        cusolverH,
+        CUBLAS_FILL_MODE_UPPER,
+        A.nb,
+        A.dense_tiles_gpu[0].x,  // any tile with correct leading dim works for sizing
+        A.nb,
+        &workspace_size
+    ));
+
+    double *workspace = NULL;
+    int    *devInfo   = NULL;
+    CHECK_CUDA(cudaMalloc((void**)&workspace, (size_t)workspace_size * sizeof(double)));
+    CHECK_CUDA(cudaMalloc((void**)&devInfo, sizeof(int)));
+
+    // Constants
+    const double zone  =  1.0;
+    const double mzone = -1.0;
+
+    ss_init(A.nt, A.nt, 0);
+
+    const int  et_size = A.e_trick_size[rank];
+    int        abort_flag = 0;
+
+    for (int i = 0; i < et_size; ++i) {
+        // Pull the 7-tuple for this scheduled micro-kernel once
+        const int *t = &A.e_trick[rank][i * 7];
+
+        const int myroutine = t[0];
+        const int m         = t[1];
+        const int k         = t[2];
+        const int n         = t[3];
+        const int index1    = t[4];
+        const int index2    = t[5];
+        const int index3    = t[6];
+
+        const int tempkn = (k == (A.nt - 1)) ? (A.n - k * A.nb) : A.nb;
+        const int tempmn = (m == (A.nt - 1)) ? (A.n - m * A.nb) : A.nb;
+
+        const int ldak = BLKLDD(A, k);
+        const int ldan = BLKLDD(A, n);
+        const int ldam = BLKLDD(A, m); (void)ldam; // may be unused depending on schedule
+
+        switch (myroutine) {
+            case 1: {
+                // POTRF on (k,k)
+                CHECK_CUSOLVER(cusolverDnDpotrf(
+                    cusolverH,
+                    CUBLAS_FILL_MODE_UPPER,
+                    tempkn,
+                    A.dense_tiles_gpu[index1].x,
+                    ldak,
+                    workspace,
+                    workspace_size,
+                    devInfo
+                ));
+                // We must not signal completion until the factorization is actually done.
+                CHECK_CUDA(cudaStreamSynchronize(stream));
+                ss_cond_set(k, k, 1);
+            } break;
+
+            case 2: {
+                // SYRK update on (k,k) with panel n
+                ss_cond_wait(k, n, 1);
+
+                // C := beta*C + alpha*A^T*A
+                cublasDsyrk(
+                    cublasH,
+                    CUBLAS_FILL_MODE_UPPER,
+                    CUBLAS_OP_T,
+                    tempkn, A.nb,
+                    &mzone,
+                    A.dense_tiles_gpu[index1].x, ldan,
+                    &zone,
+                    A.dense_tiles_gpu[index2].x, ldak
+                );
+                // No ss_cond_set follows; let it run asynchronously to overlap.
+            } break;
+
+            case 3: {
+                // TRSM on row/column (depending on your layout) using factor (k,k)
+                ss_cond_wait(k, k, 1);
+                cublasDtrsm(
+                    cublasH,
+                    CUBLAS_SIDE_LEFT,
+                    CUBLAS_FILL_MODE_UPPER,
+                    CUBLAS_OP_T,
+                    CUBLAS_DIAG_NON_UNIT,
+                    A.nb, tempmn,
+                    &zone,
+                    A.dense_tiles_gpu[index2].x, ldak,  // triangular block (k,k)
+                    A.dense_tiles_gpu[index1].x, ldak   // RHS block
+                );
+                // We must not signal completion until the TRSM result is ready.
+                CHECK_CUDA(cudaStreamSynchronize(stream));
+                ss_cond_set(m, k, 1);
+            } break;
+
+            case 4: {
+                // GEMM update of trailing submatrix block (k,m) from panels at n
+                ss_cond_wait(k, n, 1);
+                ss_cond_wait(m, n, 1);
+
+                cublasDgemm(
+                    cublasH,
+                    CUBLAS_OP_T, CUBLAS_OP_N,
+                    A.nb, tempmn, A.nb,
+                    &mzone,
+                    A.dense_tiles_gpu[index1].x, ldan,
+                    A.dense_tiles_gpu[index2].x, ldan,
+                    &zone,
+                    A.dense_tiles_gpu[index3].x, ldak
+                );
+                // No ss_cond_set here; keep asynchronous to increase overlap.
+            } break;
+
+            default:
+                // Unknown micro-routine type; mark abort and break out.
+                abort_flag = 1;
+                break;
+        }
+
+        if (abort_flag || ss_aborted()) break;
+    }
+
+    // Ensure all enqueued work finishes before teardown & freeing device memory.
+    CHECK_CUDA(cudaStreamSynchronize(stream));
+
+    ss_finalize();
+
+    // Cleanup
+    cudaFree(workspace);
+    cudaFree(devInfo);
+    cusolverDnDestroy(cusolverH);
+    cublasDestroy(cublasH);
+}
+
+// Assumes: cuda_runtime.h, cublas_v2.h, and project headers are included.
+
+#ifndef CHECK_CUDA
+#define CHECK_CUDA(call)                                                           \
+    do {                                                                           \
+        cudaError_t _err = (call);                                                 \
+        if (_err != cudaSuccess) {                                                 \
+            fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__, __LINE__,          \
+                    cudaGetErrorString(_err));                                     \
+            goto cleanup;                                                          \
+        }                                                                          \
+    } while (0)
+#endif
+
+#ifndef CHECK_CUBLAS
+#define CHECK_CUBLAS(call)                                                         \
+    do {                                                                           \
+        cublasStatus_t _st = (call);                                               \
+        if (_st != CUBLAS_STATUS_SUCCESS) {                                        \
+            fprintf(stderr, "cuBLAS error %s:%d: %d\n", __FILE__, __LINE__, (int)_st); \
+            goto cleanup;                                                          \
+        }                                                                          \
+    } while (0)
+#endif
+
+inline void stiles_pdtrtri_gpu(stiles_context_t *stile)
+{
+    int uplo;
+    TilesDescriptor A;
+    STILES_sequence *sequence;
+    STILES_request  *request;
+
+    // Scalars
+    const double one     =  1.0;
+    const double neg_one = -1.0;
+    const double zero    =  0.0;
+
+    // Unpack and quick-fail if sequence already errored
+    stiles_unpack_args_4(uplo, A, sequence, request);
+    if (sequence->status != 0) {
+        fprintf(stderr, "stiles_pdtrtri_gpu: sequence->status = %d\n", sequence->status);
+        return;
+    }
+
+    // Setup GPU + cuBLAS (on this rank's stream)
+    const int          rank   = STILES_RANK;
+    const cudaStream_t stream = A.streams[rank];
+
+    CHECK_CUDA(cudaSetDevice(A.GPU_ID));
+
+    cublasHandle_t handle = NULL;
+    CHECK_CUBLAS(cublasCreate(&handle));
+    CHECK_CUBLAS(cublasSetStream(handle, stream));
+    // Optional: enable best math mode your platform supports for double
+    // CHECK_CUBLAS(cublasSetMathMode(handle, CUBLAS_DEFAULT_MATH));
+
+    in_init(A.nt, A.nt, 0);
+
+    // Pull the schedule for this rank
+    const int  nsteps = A.e_trick_size_inv[rank];
+    const int *plan   = A.e_trick_inv[rank];
+
+    for (int in = 0; in < nsteps; ++in) {
+        const int *e   = plan + 7 * in;   // [routine, i, j, k, idx1, idx2, idx3]
+        const int  r   = e[0];
+        const int  i   = e[1];
+        const int  j   = e[2];
+        const int  k   = e[3];
+        const int  idx1= e[4];
+        const int  idx2= e[5];
+        const int  idx3= e[6];
+
+        switch (r) {
+        case 1: {
+            // TRSM: X = U^{-1} * B  (left, upper, non-unit)
+            const int m   = A.dense_tiles[idx1].width;
+            const int n   = A.dense_tiles[idx1].width;
+            const int lda = A.dense_tiles[idx1].width;
+            const int ldb = A.inverse_tiles[idx1].width;
+
+            CHECK_CUBLAS(cublasDtrsm(handle,
+                                     CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER,
+                                     CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT,
+                                     m, n, &one,
+                                     A.dense_tiles_gpu[idx1].x,   lda,
+                                     A.inverse_tiles_gpu[idx1].x, ldb));
+        } break;
+
+        case 2: {
+            // TRMM: C = U * B  (left, upper, non-unit)
+            const int m   = A.dense_tiles[idx2].height;
+            const int n   = A.dense_tiles[idx2].width;
+            const int lda = A.inverse_tiles_gpu[idx1].height;
+            const int ldb = A.dense_tiles[idx2].height;
+            const int ldc = A.dense_tiles[idx2].height;
+
+            CHECK_CUBLAS(cublasDtrmm_v2(handle,
+                                        CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_UPPER,
+                                        CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT,
+                                        m, n, &one,
+                                        A.inverse_tiles_gpu[idx1].x, lda,
+                                        A.dense_tiles_gpu[idx2].x,   ldb,
+                                        A.dense_tiles_gpu[idx2].x,   ldc));
+        } break;
+
+        case 3: {
+            // Global barrier: ensure all prior GPU work is visible before synchronizing threads
+            CHECK_CUDA(cudaStreamSynchronize(stream));
+            sTiles::Control::Barrier(stile);
+        } break;
+
+        case 4: {
+            // U * U^T : prefer SYRK over GEMM for symmetric output
+            const int n   = A.inverse_tiles[idx1].width;
+            const int lda = A.inverse_tiles[idx1].height;
+            const int ldc = A.inverse_tiles[idx1].height;
+
+            CHECK_CUBLAS(cublasDsyrk(handle,
+                                     CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N,
+                                     n, n, &one,
+                                     A.inverse_tiles_gpu[idx1].x, lda,
+                                     &zero,
+                                     A.inverse_tiles_gpu[idx1].x, ldc));
+
+            // If a full matrix is required downstream, mirror once.
+            mirroring_gpu(A.inverse_tiles[idx1].height,
+                          A.inverse_tiles_gpu[idx1].x,
+                          A.inverse_tiles_gpu[idx1].x,
+                          A.inverse_tiles[idx1].height,
+                          stream);
+        } break;
+
+        case 5: {
+            // Wait for (i,k), then: C(idx1) += -A(idx2) * B(idx2)^T
+            in_cond_wait(i, k, 2);
+
+            const int m   = A.dense_tiles[idx2].height;
+            const int n   = A.dense_tiles[idx2].height;
+            const int kk  = A.dense_tiles[idx2].width;
+            const int lda = A.dense_tiles[idx2].height;
+            const int ldb = A.inverse_tiles[idx2].height;
+            const int ldc = A.inverse_tiles[idx1].height;
+
+            CHECK_CUBLAS(cublasDgemm(handle,
+                                     CUBLAS_OP_N, CUBLAS_OP_T,
+                                     m, n, kk,
+                                     &neg_one,
+                                     A.dense_tiles_gpu[idx2].x,   lda,
+                                     A.inverse_tiles_gpu[idx2].x, ldb,
+                                     &one,
+                                     A.inverse_tiles_gpu[idx1].x, ldc));
+        } break;
+
+        case 6: {
+            // A host-side condition; make sure preceding GPU work completed before we mark "ready".
+            CHECK_CUDA(cudaStreamSynchronize(stream));
+            in_cond_set(i, i, 2);
+        } break;
+
+        case 7: {
+            // Wait for (j,k), then: C(idx3) += -A(idx1) * B(idx2)^T
+            in_cond_wait(j, k, 2);
+
+            const int m   = A.dense_tiles[idx1].height;
+            const int n   = A.inverse_tiles[idx2].height;
+            const int kk  = A.dense_tiles[idx1].width;
+            const int lda = A.dense_tiles[idx1].height;
+            const int ldb = A.inverse_tiles[idx2].height;
+            const int ldc = A.inverse_tiles[idx3].height;
+
+            CHECK_CUBLAS(cublasDgemm(handle,
+                                     CUBLAS_OP_N, CUBLAS_OP_T,
+                                     m, n, kk,
+                                     &neg_one,
+                                     A.dense_tiles_gpu[idx1].x,   lda,
+                                     A.inverse_tiles_gpu[idx2].x, ldb,
+                                     &one,
+                                     A.inverse_tiles_gpu[idx3].x, ldc));
+        } break;
+
+        case 8: {
+            // Wait for (k,j), then: C(idx3) += -A(idx1) * B(idx2)
+            in_cond_wait(k, j, 2);
+
+            const int m   = A.dense_tiles[idx1].height;
+            const int n   = A.inverse_tiles[idx2].width;
+            const int kk  = A.dense_tiles[idx1].width;
+            const int lda = A.dense_tiles[idx1].height;
+            const int ldb = A.inverse_tiles[idx2].height;
+            const int ldc = A.inverse_tiles[idx3].height;
+
+            CHECK_CUBLAS(cublasDgemm(handle,
+                                     CUBLAS_OP_N, CUBLAS_OP_N,
+                                     m, n, kk,
+                                     &neg_one,
+                                     A.dense_tiles_gpu[idx1].x,   lda,
+                                     A.inverse_tiles_gpu[idx2].x, ldb,
+                                     &one,
+                                     A.inverse_tiles_gpu[idx3].x, ldc));
+        } break;
+
+        case 9: {
+            // Another host-side condition – ensure prior GPU work is done first.
+            CHECK_CUDA(cudaStreamSynchronize(stream));
+            in_cond_set(i, j, 2);
+        } break;
+
+        default:
+            fprintf(stderr, "Unknown routine: %d\n", r);
+            break;
+        }
+    }
+
+cleanup:
+    in_finalize();
+    if (handle) cublasDestroy(handle);
+}

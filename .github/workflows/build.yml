@@ -1,0 +1,141 @@
+########################################################################
+# Build libstiles for every target OS/arch on real hardware.
+#
+# GitHub Actions rents you the machines you don't own (real Intel + Apple
+# Silicon Macs, real Linux), builds NATIVELY on each — no cross-compiling —
+# and collects the .so/.dylib as downloadable artifacts.
+#
+# WHY no AVX2-vs-AVX512 matrix here: sTiles' hot FLOPs live in MKL/libxsmm,
+# which pick their widest CPU kernels at RUNTIME. So one portable build per
+# platform (MARCH=avx2 on x86, apple-m1 on ARM) is optimal; a per-ISA build
+# matrix or target_clones would add complexity for ~0% speedup. See
+# docs note in the repo (memory: stiles-build-system-overhaul).
+#
+# BLAS per platform (auto-detected by make.inc):
+#   Linux x86_64  -> Intel MKL (embedded static, self-contained .so)
+#   macOS Intel   -> Accelerate framework (built-in, zero install)
+#   macOS Apple   -> Accelerate framework (built-in, zero install)
+#
+# Trigger: on every push/tag, or manually from the Actions tab.
+########################################################################
+name: build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  workflow_dispatch:        # lets you run it by hand from the Actions tab
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false      # one platform failing must not cancel the others
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            arch: x86_64
+          - name: macos-intel-x86_64
+            os: macos-13     # last Intel macOS runner
+            arch: x86_64
+          - name: macos-apple-arm64
+            os: macos-14     # Apple Silicon (M1) runner
+            arch: arm64
+          # Optional: uncomment for a Linux arm64 (.so) build too.
+          # - name: linux-arm64
+          #   os: ubuntu-24.04-arm
+          #   arch: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+        # SCOTCH/METIS/SuiteSparse are vendored as plain in-tree sources,
+        # not git submodules, so no submodule fetch is needed.
+
+      # ---- Linux deps: gcc/gfortran, hwloc, numa, SCOTCH compression libs ----
+      - name: Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            g++ gfortran make pkg-config \
+            libhwloc-dev libnuma-dev \
+            zlib1g-dev libbz2-dev liblzma-dev
+
+      # ---- Linux BLAS: Intel oneAPI MKL (embedded statically into the .so) ----
+      # Simpler alternative: replace this whole step with
+      #   sudo apt-get install -y libopenblas-dev liblapacke-dev
+      # and make.inc auto-detects OpenBLAS instead (dynamic dep, no embedding).
+      - name: Install Intel MKL (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+            | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/oneapi.gpg] https://apt.repos.intel.com/oneapi all main" \
+            | sudo tee /etc/apt/sources.list.d/oneAPI.list
+          sudo apt-get update
+          sudo apt-get install -y intel-oneapi-mkl-devel
+
+      # ---- macOS deps: real gfortran + libomp + hwloc from Homebrew ----------
+      # BLAS = Accelerate (built into macOS 13.3+), no install needed.
+      - name: macOS deps
+        if: runner.os == 'macOS'
+        run: brew install gcc libomp hwloc
+
+      # ---- Build (make.inc auto-detects platform, arch, BLAS, OpenMP) --------
+      - name: Build libstiles
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            source /opt/intel/oneapi/setvars.sh || true
+            make dist MARCH=avx2            # portable x86_64 (Intel 2013+/AMD 2017+)
+          elif [ "${{ matrix.arch }}" = "arm64" ]; then
+            make dist                        # Apple Silicon: -mcpu=apple-m1 default
+          else
+            make dist MARCH=avx2             # Intel Mac
+          fi
+
+      - name: Sanity check the built library
+        run: |
+          ls -lh dist/lib/
+          if [ "${{ runner.os }}" = "macOS" ]; then otool -L dist/lib/libstiles.dylib; \
+          else ldd dist/lib/libstiles.so; fi
+
+      # Prove the library actually WORKS on this OS/arch (not just that it
+      # compiled): factorize + logdet + selinv + solve on a few matrices and
+      # gate on the solve residual. `make dist` already produced lib/libstiles.*.
+      - name: Smoke test (speed + correctness)
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then source /opt/intel/oneapi/setvars.sh || true; fi
+          cd bench && ./run.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libstiles-${{ matrix.name }}
+          path: |
+            dist/lib/libstiles.*
+            dist/include/stiles.h
+            dist/lib/pkgconfig/stiles.pc
+
+  # Optional: merge the two macOS builds into one universal (fat) dylib that
+  # runs on both Intel and Apple Silicon. Delete this job if you'd rather ship
+  # the two separate dylibs.
+  macos-universal:
+    needs: build
+    runs-on: macos-14
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: libstiles-macos-intel-x86_64, path: intel }
+      - uses: actions/download-artifact@v4
+        with: { name: libstiles-macos-apple-arm64, path: arm }
+      - name: lipo into a universal dylib
+        run: |
+          mkdir -p universal
+          lipo -create intel/dist/lib/libstiles.dylib arm/dist/lib/libstiles.dylib \
+               -output universal/libstiles.dylib
+          lipo -info universal/libstiles.dylib
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libstiles-macos-universal
+          path: universal/libstiles.dylib

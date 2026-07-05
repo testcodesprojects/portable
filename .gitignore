@@ -1,0 +1,26 @@
+# ── Build artifacts ────────────────────────────────────────────────────────
+*.o
+*.d
+*.a
+*.so
+*.dylib
+lib/
+dist/
+tools/libs/
+.standalone_so.cache
+
+# ── libxsmm is cloned + built at build time ────────────────────────────────
+# (tools/libxsmm/install_libxsmm_local.sh clones from github.com/libxsmm)
+tools/libxsmm/libxsmm/
+tools/libxsmm/libxsmm_local/
+
+# ── Regenerated ordering sub-build artifacts (vendored sources are kept) ────
+tools/**/build/
+tools/**/*_local/
+
+# ── Speed-test binary ──────────────────────────────────────────────────────
+bench/speedtest
+
+# ── Editor / OS cruft ──────────────────────────────────────────────────────
+*~
+.DS_Store

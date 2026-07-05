@@ -1,0 +1,13 @@
+###############################################################################
+# sTiles Internal Makefile
+###############################################################################
+# This file is included by sub-Makefiles. Do not modify.
+# All configuration should be done in make.inc
+###############################################################################
+
+include $(STILES_DIR)/make.inc
+
+# Static library location (libstiles contains all functionality)
+LIBSTILES := $(STILES_DIR)/lib/libstiles.a
+
+.PHONY: all clean cleanall

@@ -1129,8 +1129,15 @@ namespace sTiles{
                     int x = std::atoi(v);
                     if (x >= 0) return x;
                 }
+                // __builtin_cpu_is/_init are x86-only. On non-x86 (e.g. Apple
+                // Silicon) fall back to the conservative Intel-like crossover;
+                // STILES_FUSE_THRESHOLD overrides it for tuning.
+#if defined(__x86_64__) || defined(__i386__)
                 __builtin_cpu_init();
                 return __builtin_cpu_is("amd") ? (1 << 20) : 16;
+#else
+                return 16;
+#endif
             }();
 
             const int64_t* scatter_index = tiledMatrix->chol_scatter_index->data();

@@ -136,13 +136,20 @@ SCO_GEN_OBJS := ../ordering/sco_parser_ll.o ../ordering/sco_parser_yy.o
 EXTERN_OBJS  += $(SCO_SRC_OBJS) $(SCO_GEN_OBJS)
 
 # Thread affinity uses Linux-only cpu_set_t/CPU_SET; must be off on macOS.
+# macOS also lacks _POSIX_TIMERS, so SCOTCH's clockGet() falls back to the
+# gettimeofday() branch, which needs <sys/time.h>/<sys/resource.h> — SCOTCH
+# only includes those when HAVE_SYS_TIME_H/HAVE_SYS_RESOURCE_H are set (its
+# configure would probe them). Linux takes the clock_gettime path, so these
+# are a no-op there; keep them macOS-only to leave the Linux build untouched.
 ifeq ($(PLATFORM),linux)
     SCO_AFFINITY_DEF := -DCOMMON_PTHREAD_AFFINITY_LINUX
+    SCO_TIME_DEF     :=
 else
     SCO_AFFINITY_DEF :=
+    SCO_TIME_DEF     := -DHAVE_SYS_TIME_H -DHAVE_SYS_RESOURCE_H
 endif
 SCO_DEFINES := -DCOMMON_FILE_COMPRESS_BZ2 -DCOMMON_FILE_COMPRESS_GZ -DCOMMON_FILE_COMPRESS_LZMA \
-               -DCOMMON_PTHREAD $(SCO_AFFINITY_DEF) -DCOMMON_RANDOM_FIXED_SEED \
+               -DCOMMON_PTHREAD $(SCO_AFFINITY_DEF) $(SCO_TIME_DEF) -DCOMMON_RANDOM_FIXED_SEED \
                -DSCOTCH_DETERMINISTIC -DSCOTCH_PATCHLEVEL_NUM=10 -DSCOTCH_PTHREAD \
                -DSCOTCH_RELEASE_NUM=0 -DSCOTCH_RENAME -DSCOTCH_VERSION_NUM=7 -Drestrict=__restrict
 SCO_CFLAGS := -U_FORTIFY_SOURCE -O3 -fPIC -DNDEBUG -std=gnu99 $(SCO_DEFINES) \

@@ -141,14 +141,20 @@ EXTERN_OBJS  += $(SCO_SRC_OBJS) $(SCO_GEN_OBJS)
 # only includes those when HAVE_SYS_TIME_H/HAVE_SYS_RESOURCE_H are set (its
 # configure would probe them). Linux takes the clock_gettime path, so these
 # are a no-op there; keep them macOS-only to leave the Linux build untouched.
+# Compressed graph-FILE support (gz/bz2/lzma) is UNUSED by sTiles — it feeds
+# SCOTCH in-memory graphs via the API, never reads .grf files. Kept on Linux to
+# preserve the bit-identical ordering build; dropped on macOS, where lzma.h is
+# not in the SDK (and it drops the -lz/-lbz2/-llzma link deps there too).
 ifeq ($(PLATFORM),linux)
     SCO_AFFINITY_DEF := -DCOMMON_PTHREAD_AFFINITY_LINUX
     SCO_TIME_DEF     :=
+    SCO_COMPRESS_DEF := -DCOMMON_FILE_COMPRESS_BZ2 -DCOMMON_FILE_COMPRESS_GZ -DCOMMON_FILE_COMPRESS_LZMA
 else
     SCO_AFFINITY_DEF :=
     SCO_TIME_DEF     := -DHAVE_SYS_TIME_H -DHAVE_SYS_RESOURCE_H
+    SCO_COMPRESS_DEF :=
 endif
-SCO_DEFINES := -DCOMMON_FILE_COMPRESS_BZ2 -DCOMMON_FILE_COMPRESS_GZ -DCOMMON_FILE_COMPRESS_LZMA \
+SCO_DEFINES := $(SCO_COMPRESS_DEF) \
                -DCOMMON_PTHREAD $(SCO_AFFINITY_DEF) $(SCO_TIME_DEF) -DCOMMON_RANDOM_FIXED_SEED \
                -DSCOTCH_DETERMINISTIC -DSCOTCH_PATCHLEVEL_NUM=10 -DSCOTCH_PTHREAD \
                -DSCOTCH_RELEASE_NUM=0 -DSCOTCH_RENAME -DSCOTCH_VERSION_NUM=7 -Drestrict=__restrict

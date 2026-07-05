@@ -730,7 +730,14 @@ SCOTCH_INLINE_DIR := $(TOOLS_DIR)/ordering/scotch/scotch_inline
 SCOTCH_INC        := -I$(SCOTCH_INLINE_DIR)
 SCOTCH_LIB        :=
 SCOTCH_STATIC_LIBS :=
-SCOTCH_EXTRA_LIBS := -lz -lbz2 -llzma
+# SCOTCH's compressed-file support (and thus its -lz/-lbz2/-llzma deps) is only
+# compiled on Linux (see tools/process/Makefile). macOS builds SCOTCH without
+# it, so no compression libs are needed — and -llzma would fail to link there.
+ifeq ($(PLATFORM),macos)
+    SCOTCH_EXTRA_LIBS :=
+else
+    SCOTCH_EXTRA_LIBS := -lz -lbz2 -llzma
+endif
 
 # SuiteSparse - AMD/CAMD/COLAMD/CCOLAMD/BTF, compiled directly into libstiles.
 # The sources are compiled into ../ordering/ss_*.o by tools/process/Makefile and

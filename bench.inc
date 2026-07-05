@@ -158,6 +158,12 @@ endif
 # Link Flags
 ###############################################################################
 # Note: SCOTCH and SuiteSparse symbols are embedded in libstiles via
-# --whole-archive; only SCOTCH's compression libs are needed here.
+# --whole-archive; SCOTCH's compression libs are only needed on Linux (macOS
+# builds SCOTCH without gz/bz2/lzma file support — see tools/process/Makefile).
 # Recursive on purpose: LDFLAGS_EXTRA may be appended after this include.
-LDFLAGS = $(LIBPATH) $(LIBS) $(BLAS_LIBS) $(OMP_LIBS) $(OPTIONAL_LIBS) $(LDFLAGS_EXTRA) $(GFORTRAN_BENCH_LINK) -lpthread -lm -ldl -lz -lbz2 -llzma
+ifeq ($(PLATFORM),macos)
+    SCOTCH_COMPRESS_LIBS :=
+else
+    SCOTCH_COMPRESS_LIBS := -lz -lbz2 -llzma
+endif
+LDFLAGS = $(LIBPATH) $(LIBS) $(BLAS_LIBS) $(OMP_LIBS) $(OPTIONAL_LIBS) $(LDFLAGS_EXTRA) $(GFORTRAN_BENCH_LINK) -lpthread -lm -ldl $(SCOTCH_COMPRESS_LIBS)

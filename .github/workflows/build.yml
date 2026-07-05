@@ -154,6 +154,37 @@ jobs:
             dist/include/stiles.h
             dist/lib/pkgconfig/stiles.pc
 
+  # Diagnostic: build libstiles with AddressSanitizer on Apple Silicon and run
+  # the ordering-only driver on spacetime. SCOTCH corrupts the heap on arm64 for
+  # that matrix, but the identical run is CLEAN on Linux under both ASan and
+  # Valgrind — so the bug only exists in real arm64 execution. ASan instruments
+  # the arm64 code, so it prints the exact SCOTCH file:line that overflows, which
+  # is what we need to fix it. Non-gating (continue-on-error): purely a probe.
+  macos-asan-scotch:
+    name: macos-asan-scotch-diagnostic
+    runs-on: macos-14           # Apple Silicon
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: brew install gcc libomp hwloc openblas lapack
+      - name: Build libstiles with AddressSanitizer
+        run: make BUILD=sanitize USE_LIBXSMM=0 all
+      - name: Build order_only (ASan) and run spacetime ordering
+        run: |
+          cd bench
+          # Match the library's ASan so the runtime is consistent across the .dylib boundary.
+          clang++ -std=c++20 -O1 -g -fsanitize=address -fno-omit-frame-pointer \
+            -I../tools/include -o order_only order_only.cpp \
+            -L../lib -lstiles -Wl,-rpath,../lib
+          export ASAN_OPTIONS="detect_leaks=0:abort_on_error=1:halt_on_error=1:symbolize=1"
+          echo "::group::ASan — spacetime ordering (SCOTCH overflow expected here)"
+          STILES_SCOTCH_CTX=0 ./order_only mats/spacetime.mtx 1 40 || true
+          echo "::endgroup::"
+          echo "::group::ASan — spacetime with SCOTCH context ON"
+          STILES_SCOTCH_CTX=1 ./order_only mats/spacetime.mtx 1 40 || true
+          echo "::endgroup::"
+
   # Optional: merge the two macOS builds into one universal (fat) dylib that
   # runs on both Intel and Apple Silicon. Delete this job if you'd rather ship
   # the two separate dylibs.

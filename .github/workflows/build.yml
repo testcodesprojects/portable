@@ -129,6 +129,21 @@ jobs:
           if [ "${{ runner.os }}" = "Linux" ]; then source /opt/intel/oneapi/setvars.sh || true; fi
           cd bench && ./run.sh
 
+      # Nested parallelism: run several Cholesky factorizations CONCURRENTLY,
+      # each on its own cores (the INLA "groups" pattern). Checks every call
+      # returns the same logdet and reports the serial-vs-concurrent speedup.
+      # Kept modest (<= runner core count) so concurrency is real, not
+      # oversubscribed: hosted runners have ~3-4 cores.
+      - name: Parallel factorization test (concurrent chols)
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then source /opt/intel/oneapi/setvars.sh || true; fi
+          cd bench
+          make -s parallel_chol
+          echo "### 2 concurrent factorizations x 2 cores each"
+          ./parallel_chol mats/ferris.mtx 2 2
+          echo "### 4 concurrent factorizations x 1 core each"
+          ./parallel_chol mats/ferris.mtx 4 1
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

@@ -145,17 +145,23 @@ EXTERN_OBJS  += $(SCO_SRC_OBJS) $(SCO_GEN_OBJS)
 # SCOTCH in-memory graphs via the API, never reads .grf files. Kept on Linux to
 # preserve the bit-identical ordering build; dropped on macOS, where lzma.h is
 # not in the SDK (and it drops the -lz/-lbz2/-llzma link deps there too).
+#
+# SCO_OS_DEF: SCOTCH's own platform flag. On macOS, -DCOMMON_OS_MACOS makes
+# common.h define _DARWIN_C_SOURCE + HAVE_SYS_SYSCTL_H + COMMON_TIMING_OLD, so
+# SCOTCH uses the sysctl() core-count path and getrusage() timing (both macOS-
+# correct) instead of the Linux sysconf()/gettimeofday() paths. Linux passes
+# no OS flag (its default branch is the Linux one).
 ifeq ($(PLATFORM),linux)
     SCO_AFFINITY_DEF := -DCOMMON_PTHREAD_AFFINITY_LINUX
-    SCO_TIME_DEF     :=
+    SCO_OS_DEF       :=
     SCO_COMPRESS_DEF := -DCOMMON_FILE_COMPRESS_BZ2 -DCOMMON_FILE_COMPRESS_GZ -DCOMMON_FILE_COMPRESS_LZMA
 else
     SCO_AFFINITY_DEF :=
-    SCO_TIME_DEF     := -DHAVE_SYS_TIME_H -DHAVE_SYS_RESOURCE_H
+    SCO_OS_DEF       := -DCOMMON_OS_MACOS
     SCO_COMPRESS_DEF :=
 endif
-SCO_DEFINES := $(SCO_COMPRESS_DEF) \
-               -DCOMMON_PTHREAD $(SCO_AFFINITY_DEF) $(SCO_TIME_DEF) -DCOMMON_RANDOM_FIXED_SEED \
+SCO_DEFINES := $(SCO_COMPRESS_DEF) $(SCO_OS_DEF) \
+               -DCOMMON_PTHREAD $(SCO_AFFINITY_DEF) -DCOMMON_RANDOM_FIXED_SEED \
                -DSCOTCH_DETERMINISTIC -DSCOTCH_PATCHLEVEL_NUM=10 -DSCOTCH_PTHREAD \
                -DSCOTCH_RELEASE_NUM=0 -DSCOTCH_RENAME -DSCOTCH_VERSION_NUM=7 -Drestrict=__restrict
 SCO_CFLAGS := -U_FORTIFY_SOURCE -O3 -fPIC -DNDEBUG -std=gnu99 $(SCO_DEFINES) \

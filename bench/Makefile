@@ -14,7 +14,14 @@ include $(STILES_PATH)/bench.inc
 
 CXXFLAGS = -std=c++20 -O2 -Wall -Wextra $(OMP_CXXFLAGS)
 
+all: speedtest parallel_chol
+
 speedtest: speedtest.cpp $(STILES_PATH)/lib/libstiles.so
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $< $(LDFLAGS)
+
+# Demo: N concurrent Cholesky factorizations, each on its own cores.
+#   ./parallel_chol mats/ferris.mtx 4 2
+parallel_chol: parallel_chol.cpp $(STILES_PATH)/lib/libstiles.so
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $< $(LDFLAGS)
 
 # macOS produces libstiles.dylib; the .so symlink also exists, but depend on the
@@ -24,6 +31,6 @@ $(STILES_PATH)/lib/libstiles.so:
 	@exit 1
 
 clean:
-	rm -f speedtest
+	rm -f speedtest parallel_chol
 
-.PHONY: clean
+.PHONY: all clean

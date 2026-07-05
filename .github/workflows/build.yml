@@ -86,15 +86,19 @@ jobs:
         run: brew install gcc libomp hwloc openblas lapack
 
       # ---- Build (make.inc auto-detects platform, arch, BLAS, OpenMP) --------
+      # USE_LIBXSMM=0 on macOS: libxsmm's build clones its unstable `main` branch
+      # and compiles it with -Werror under the newest brew compilers, which is
+      # fragile on macOS. libxsmm is an OPTIONAL selinv accelerator — without it
+      # sTiles falls back to cblas_dgemm (OpenBLAS), so the build stays robust.
       - name: Build libstiles
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then
             source /opt/intel/oneapi/setvars.sh || true
-            make dist MARCH=avx2            # portable x86_64 (Intel 2013+/AMD 2017+)
+            make dist MARCH=avx2                       # portable x86_64
           elif [ "${{ matrix.arch }}" = "arm64" ]; then
-            make dist                        # Apple Silicon: -mcpu=apple-m1 default
+            make dist USE_LIBXSMM=0                    # Apple Silicon (-mcpu=apple-m1)
           else
-            make dist MARCH=avx2             # Intel Mac
+            make dist MARCH=avx2 USE_LIBXSMM=0         # Intel Mac
           fi
 
       - name: Sanity check the built library

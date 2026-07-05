@@ -141,17 +141,19 @@ static int runSCOTCH_impl(int** csr_i, int** csr_j, int N, int nnz, int m,
     // Set STILES_SCOTCH_CTX=0 to fall back to the original global-determinism +
     // mutex path (serial, exact-reproducible).
     const char* _e_ctx = std::getenv("STILES_SCOTCH_CTX");
-#if defined(__APPLE__)
-    // macOS: the ordering bake-off is serialized (see async_bigstack.hpp), so the
-    // per-call SCOTCH_Context — whose ONLY purpose is making concurrent SCOTCH calls
-    // thread-safe — buys nothing here. It is also the newest / least-portable SCOTCH
-    // path and was implicated in an arm64 EXC_BAD_ACCESS inside runSCOTCH_impl. Default
-    // to the classic serialized path (global determinism + g_scotch_global_mutex), which
-    // is the originally validated one. STILES_SCOTCH_CTX=1 forces the context path back on.
-    const bool use_ctx = (_e_ctx && std::atoi(_e_ctx) == 1);
-#else
-    const bool use_ctx = !(_e_ctx && std::atoi(_e_ctx) == 0);  // DEFAULT ON (parallel SCOTCH); STILES_SCOTCH_CTX=0 forces the serial mutex path
-#endif
+    // DEFAULT ON (per-call SCOTCH_Context) on ALL platforms; STILES_SCOTCH_CTX=0
+    // forces the classic global+mutex path.
+    //
+    // macOS/arm64 REQUIRES the context path. The classic non-context path uses
+    // SCOTCH's global state and, on arm64, corrupts memory in SCOTCH's own graph
+    // recursion (a garbage-pointer SEGV in SCOTCH_graphExit / an abort under ASan)
+    // for the spacetime matrix. The context path binds an isolated managed graph
+    // and initializes threading through the context (honoring SCOTCH_PTHREAD_NUMBER=1,
+    // set on macOS above/at load), and is CLEAN there: the macos-asan-scotch CI
+    // probe aborts with CTX=0 but PASSES with CTX=1. (An earlier build defaulted
+    // this OFF on macOS, before the tree-skip removed the context path's own
+    // treetab over-free; with that fixed, context-on is the good path.)
+    const bool use_ctx = !(_e_ctx && std::atoi(_e_ctx) == 0);
     std::unique_lock<std::mutex> scotch_lock(g_scotch_global_mutex, std::defer_lock);
     if (!use_ctx) {
         // Force SCOTCH into deterministic mode (global) + serialize callers.
@@ -335,13 +337,9 @@ int runASCOTCH(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, int*
     // Same determinism + serialization as runSCOTCH_impl (STILES_SCOTCH_CTX: per-call
     // context -> no mutex, runs concurrently with other SCOTCH calls).
     const char* _e_ctx = std::getenv("STILES_SCOTCH_CTX");
-#if defined(__APPLE__)
-    // See runSCOTCH_impl: on macOS the bake-off is serialized, so default to the
-    // classic (context-free) SCOTCH path. STILES_SCOTCH_CTX=1 forces the context on.
-    const bool use_ctx = (_e_ctx && std::atoi(_e_ctx) == 1);
-#else
-    const bool use_ctx = !(_e_ctx && std::atoi(_e_ctx) == 0);  // DEFAULT ON (parallel SCOTCH); STILES_SCOTCH_CTX=0 forces the serial mutex path
-#endif
+    // DEFAULT ON everywhere (see runSCOTCH_impl: macOS/arm64 needs the context path;
+    // the non-context path corrupts memory there). STILES_SCOTCH_CTX=0 forces off.
+    const bool use_ctx = !(_e_ctx && std::atoi(_e_ctx) == 0);
     std::unique_lock<std::mutex> scotch_lock(g_scotch_global_mutex, std::defer_lock);
     if (!use_ctx) {
         setenv("SCOTCH_DETERMINISTIC", "1", 1);

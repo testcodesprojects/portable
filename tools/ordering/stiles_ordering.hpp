@@ -1782,6 +1782,35 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
             }
         }
 
+        // Drop the SCOTCH family (4/41/42) from the bake-off.
+        //
+        // macOS/arm64: the vendored SCOTCH corrupts the heap on some graphs
+        // (e.g. spacetime — "pointer being freed was not allocated" / a wild write
+        // in runSCOTCH_impl). It is data-dependent and arm64-only: the identical
+        // run is clean on Linux even under AddressSanitizer, so it is a
+        // SCOTCH-on-arm64 defect we cannot reproduce or patch from here.
+        // METIS/AMD/CAMD/RCM/ND cover the ordering space (diff/ferris, which also
+        // route through SCOTCH, still pass — this forfeits SCOTCH's candidacy, not
+        // correctness). STILES_ENABLE_SCOTCH=1 re-enables it (for Mac debugging);
+        // STILES_DISABLE_SCOTCH=1 forces it off on any platform (Linux testing).
+        {
+            bool drop_scotch = false;
+#if defined(__APPLE__)
+            const char* _en = std::getenv("STILES_ENABLE_SCOTCH");
+            drop_scotch = !(_en && std::atoi(_en) == 1);
+#endif
+            const char* _dis = std::getenv("STILES_DISABLE_SCOTCH");
+            if (_dis && std::atoi(_dis) == 1) drop_scotch = true;
+            if (drop_scotch) {
+                std::vector<int> no_scotch;
+                no_scotch.reserve(orderings_vec.size());
+                for (int id : orderings_vec)
+                    if (id != 4 && id != 41 && id != 42) no_scotch.push_back(id);
+                if (no_scotch.empty()) no_scotch.push_back(21);  // keep METIS as a floor
+                orderings_vec = std::move(no_scotch);
+            }
+        }
+
         const int* all_orderings = orderings_vec.data();
         const int n_ord = static_cast<int>(orderings_vec.size());
 

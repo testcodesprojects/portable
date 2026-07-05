@@ -165,7 +165,14 @@ typedef struct {
 } SCOTCH_Mapping;
 
 typedef struct {
-  double                    dummy[17];
+  double                    dummy[24];      /* was 17: too small on macOS/arm64. The
+    real LibOrder struct embeds a pthread_mutex_t (via Order), which is 64 B on macOS
+    vs 40 B on Linux, so sizeof(LibOrder) is 160 B (20 doubles) on macOS but only 136 B
+    (17) on Linux, where this header was generated. At 17 the opaque blob was smaller
+    than LibOrder and SCOTCH's writes in SCOTCH_graphOrderInit/Exit overran it into
+    adjacent stack -> memory corruption + garbage orderings + SIGABRT, only at -O2/-O3
+    on arm64 (UBSan: library_graph_order.c:128 "insufficient space for LibOrder").
+    24 covers both platforms with margin; a larger opaque blob is always safe. */
 } SCOTCH_Ordering;
 
 typedef struct {

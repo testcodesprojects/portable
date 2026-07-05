@@ -10,32 +10,6 @@
 
 extern "C" int stiles_createSmartPermutation(int** row_indices, int** col_indices, int nnz, int node_num, int** perm);
 
-#if defined(__APPLE__)
-// Force SCOTCH single-threaded on macOS/arm64.
-//
-// SCOTCH is built with -DSCOTCH_PTHREAD; with no compile-time thread count it
-// defaults to thrdnbr = -1, i.e. "use one worker thread per core at run time"
-// (libscotch/common_context.c). SCOTCH's internal threading has a DATA RACE that
-// is benign on x86 (strong/TSO memory ordering) but corrupts memory on arm64
-// (weaker ordering): a NON-deterministic garbage-pointer crash inside
-// SCOTCH_graphExit on the spacetime matrix (the garbage value differs every run
-// — the signature of a race, not a fixed bug). That is why it is clean on Linux
-// under both AddressSanitizer and Valgrind yet fatal on Apple Silicon.
-//
-// We already parallelize ACROSS ordering candidates (the bake-off), so SCOTCH
-// should run single-threaded within a candidate anyway. Pinning it to one thread
-// removes the race. SCOTCH reads SCOTCH_PTHREAD_NUMBER from the environment at
-// context init (envGetInt), and single-threaded SCOTCH produces identical, valid
-// orderings (verified on Linux, all three strategy seeds). Respects a user
-// override. Linux is unchanged (keeps its multi-threaded, validated behaviour).
-namespace {
-struct sTilesScotchSingleThreadInit {
-    sTilesScotchSingleThreadInit() { setenv("SCOTCH_PTHREAD_NUMBER", "1", /*overwrite=*/0); }
-};
-static sTilesScotchSingleThreadInit s_scotch_single_thread_init;
-}  // namespace
-#endif
-
 namespace sTiles {
 
 // Build symmetric deduplicated CSR (verttab/edgetab) from COO input using flat allocation.

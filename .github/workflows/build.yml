@@ -137,6 +137,7 @@ jobs:
       - name: Parallel factorization test (concurrent chols)
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then source /opt/intel/oneapi/setvars.sh || true; fi
+          export OMP_STACKSIZE=256M   # big OMP-thread stack (macOS default backend)
           cd bench
           make -s parallel_chol
           echo "### 2 concurrent factorizations x 2 cores each"

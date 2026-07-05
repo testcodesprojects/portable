@@ -15,6 +15,11 @@ cd "$(dirname "$0")"
 CORES="${CORES:-4}"
 TILE="${TILE:-40}"
 
+# macOS gives OMP worker threads a small stack (the OMP backend is the macOS
+# default), which can overflow in the numeric factorization of large/high-fill
+# matrices. A big OMP stack is harmless on Linux (pthreads backend ignores it).
+export OMP_STACKSIZE="${OMP_STACKSIZE:-256M}"
+
 echo "Building speedtest..."
 if ! make -s speedtest; then
     echo "BUILD FAILED — is the library built? (run 'make all' in the repo root)" >&2
@@ -48,6 +53,18 @@ for mtx in "${mats[@]}"; do
         fail=$((fail + 1))
         echo "  --- stderr for $(basename "$mtx") ---"
         sed 's/^/  /' "$errlog"
+        # On a crash (segfault/abort with no useful message), re-run under a
+        # debugger to capture where it died — invaluable for platform-specific
+        # crashes that can't be reproduced on the dev machine.
+        if command -v lldb >/dev/null 2>&1; then
+            echo "  --- lldb backtrace for $(basename "$mtx") ---"
+            lldb --batch -o run -o "thread backtrace all" -o quit \
+                 -- ./speedtest "$mtx" "$CORES" "$TILE" 2>&1 | sed 's/^/  /' | tail -80
+        elif command -v gdb >/dev/null 2>&1; then
+            echo "  --- gdb backtrace for $(basename "$mtx") ---"
+            gdb -batch -ex run -ex "thread apply all bt" \
+                --args ./speedtest "$mtx" "$CORES" "$TILE" 2>&1 | sed 's/^/  /' | tail -80
+        fi
     fi
 done
 rm -f "$errlog"

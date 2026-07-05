@@ -189,6 +189,35 @@ bool expert_mode_enabled = false;
 #endif
 
 // ------------------------------------------------------------------
+// Force the BLAS to a SINGLE thread on non-MKL (OpenBLAS / generic) builds.
+//
+// sTiles supplies its own parallelism through the tile schedule, so the BLAS must
+// be SEQUENTIAL — exactly like the Linux build, which links sequential MKL. macOS
+// links OpenBLAS, which is multi-threaded by DEFAULT; under sTiles' nested tile
+// parallelism that both oversubscribes and, worse, makes CONCURRENT factorizations
+// non-deterministic: each concurrent call gets a different OpenBLAS reduction
+// order, so their log-determinants disagree (observed ~1.8e-4 on ferris, 2 calls
+// x 2 cores). Pinning OpenBLAS to one thread restores the sequential-BLAS design
+// and makes concurrent chols bit-consistent (as they already are with sequential
+// MKL on Linux). Multi-threaded BLAS buys nothing here anyway — the hot GEMMs are
+// small per-tile blocks. Runs once at library load. MKL builds skip this (their
+// embedded MKL is already sequential).
+#if !defined(STILES_WITH_MKL)
+extern "C" void openblas_set_num_threads(int) __attribute__((weak));
+namespace {
+struct sTilesBlasSingleThreadInit {
+    sTilesBlasSingleThreadInit() {
+        // Fallback for BLAS libs that read the env but export no setter symbol
+        // (respect an explicit user setting), then force it authoritatively.
+        setenv("OPENBLAS_NUM_THREADS", "1", /*overwrite=*/0);
+        if (openblas_set_num_threads) openblas_set_num_threads(1);
+    }
+};
+static sTilesBlasSingleThreadInit s_blas_single_thread_init;
+}  // namespace
+#endif
+
+// ------------------------------------------------------------------
 // CPU-path file-local helpers (used by the sparse/auto path — NOT GPU-specific,
 // so they must live OUTSIDE the STILES_GPU guard or CPU builds fail to link).
 namespace {
@@ -1921,7 +1950,16 @@ static int preprocess_secondary_call(int call_index,
     current_scheme->semisparseTileMetaCore = primary_scheme->semisparseTileMetaCore;
     current_scheme->tile_index_lookup = primary_scheme->tile_index_lookup;
     current_scheme->element_offset_lookup = primary_scheme->element_offset_lookup;
-    current_scheme->trees = primary_scheme->trees;
+    // Tree-reduction scratch (NodeLeaf.x/.dirty, TreeLeaf.dependency) is WRITTEN
+    // during the reduction chol, so it MUST be per-call: aliasing the primary's
+    // trees races when calls in a multi-call group factor concurrently (nested
+    // parallelism) and corrupts the factor nondeterministically. Deep-copy the
+    // topology; only the mutable scratch is freshly allocated. `red_tree_separator_level`
+    // was copied above, so it is available here.
+    current_scheme->trees =
+        (primary_scheme->trees && primary_scheme->red_tree_separator_level > 0)
+            ? cloneRedTrees(primary_scheme->trees, primary_scheme->red_tree_separator_level, group_index)
+            : primary_scheme->trees;
 
     // Copy shared within-tile indexing arrays (CRITICAL for tile element access)
     current_scheme->withinTileRow = primary_scheme->withinTileRow;
@@ -1965,6 +2003,15 @@ static int preprocess_secondary_call(int call_index,
         current_scheme->solve_fwd_offsets = primary_scheme->solve_fwd_offsets;
         current_scheme->solve_bwd_tasks = primary_scheme->solve_bwd_tasks;
         current_scheme->solve_bwd_offsets = primary_scheme->solve_bwd_offsets;
+        // The semisparse multi-RHS tasked solve reads the update-counter arrays
+        // (solve_fwd/bwd_expected). They are structural (same graph -> same
+        // counts across the group), so alias them from the primary too. Without
+        // this, secondary calls have empty `expected` and the tasked kernel
+        // falls back to stiles_pdtrsm_*_semisparse — which is correct for
+        // col-major B but WRONG for row-major B (prefer_row_layout matrices,
+        // nnz/row >= 6), so every call_index >= 1 returned a bad multi-RHS solve.
+        current_scheme->solve_fwd_expected = primary_scheme->solve_fwd_expected;
+        current_scheme->solve_bwd_expected = primary_scheme->solve_bwd_expected;
         current_scheme->rescale_schedule = primary_scheme->rescale_schedule;
     } else {
         current_scheme->chol_tasks.reset();

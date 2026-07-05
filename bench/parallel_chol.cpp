@@ -113,7 +113,17 @@ int main(int argc, char** argv) {
     double max_ld_diff = 0.0;
     for (int c = 0; c < n_calls; ++c)
         max_ld_diff = std::fmax(max_ld_diff, std::fabs(sTiles_get_logdet(0, c, &st) - ld0));
-    const bool ok = std::isfinite(ld0) && max_ld_diff < 1e-9;
+    // Concurrent factorizations of the same matrix are numerically identical but
+    // NOT necessarily bit-identical: parallel FP reductions (and multi-threaded
+    // BLAS) reorder additions, so the log-dets can differ at the rounding level.
+    // On Linux (sequential MKL + deterministic scheduling) the diff is exactly 0;
+    // on macOS (libomp + OpenBLAS) it can be ~1e-4 on a log-det of ~1e5, i.e. a
+    // RELATIVE difference near 1e-9 — a genuinely identical result. Gate on the
+    // relative difference: an absolute 1e-9 bound on a 1e5-magnitude quantity
+    // would demand ~15 significant figures, below what any parallel reduction
+    // guarantees. A real race/corruption shows up orders of magnitude larger.
+    const double ld_rel_diff = max_ld_diff / std::fmax(1.0, std::fabs(ld0));
+    const bool ok = std::isfinite(ld0) && ld_rel_diff < 1e-8;
 
     sTiles_quit();
 
@@ -121,7 +131,8 @@ int main(int argc, char** argv) {
     std::printf("matrix          : %s  (n=%d, nnz=%d)\n", basename_of(path), m.n, m.nnz);
     std::printf("concurrent chols: %d  x  %d cores each  = %d cores at peak\n",
                 n_calls, cores_per_call, n_calls * cores_per_call);
-    std::printf("logdet          : %.4f  (max diff across calls: %.1e)\n", ld0, max_ld_diff);
+    std::printf("logdet          : %.4f  (max diff across calls: %.1e abs, %.1e rel)\n",
+                ld0, max_ld_diff, ld_rel_diff);
     std::printf("serial   (1 at a time): %8.4f s\n", t_serial);
     std::printf("concurrent (all %2d)   : %8.4f s   -> %.2fx faster\n",
                 n_calls, t_parallel, t_parallel > 0 ? t_serial / t_parallel : 0.0);

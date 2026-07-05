@@ -148,11 +148,18 @@
 int stiles_control_params[STILES_NUM_PARAMS] = {
     0, -1, 14569,
 #ifdef __APPLE__
-    0,
+    0,           // [3] TileTypeMode: macOS = dense
 #else
-    1,
+    1,           // [3] TileTypeMode: Linux = semisparse
 #endif
-    14569, -1, 0, 1, 0, 2,
+    14569, -1, 0, 1,
+#ifdef __APPLE__
+    1,           // [8] UseOMP: macOS defaults to the OMP backend (no
+                 //     sched-affinity for the pthreads backend on macOS)
+#else
+    0,           // [8] UseOMP: Linux defaults to the pthreads backend
+#endif
+    2,
     0,  1, 0, 100, 0, 0, 0, 0, 0, 0,
     0,  0, 0, 0, 0,
     // 25..49: reserved for future params

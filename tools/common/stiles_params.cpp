@@ -31,7 +31,7 @@ extern "C" void stiles_set_nd_use_ndp(int v);
 // initialiser in process.cpp; both derive from sTiles::kDefaultParams.
 #ifdef __APPLE__
 static const int stiles_default_params[STILES_NUM_PARAMS] = {
-    0, -1, 14569, 0, 14569, -1, 0, 1, 0, 2,
+    0, -1, 14569, 0, 14569, -1, 0, 1, 1, 2,   // [3]=dense, [8]=OMP on macOS
     0,  1, 0, 100, 0, 0, 0, 0, 0, 0,
     0,  0, 0, 0, 0,
     // 25..49: reserved for future params

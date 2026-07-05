@@ -19,6 +19,7 @@
 namespace sTiles { namespace sparse {
 
 namespace {
+#if defined(__linux__)
 // Affinity mask snapshot taken at library load, before sTiles' static pool
 // binds the calling thread to a single core (tools/control/stilesos.cpp).
 // std::threads inherit the creator's mask, so the pthreads runners below
@@ -26,6 +27,10 @@ namespace {
 // (observed: 8 ranks, cpu/wall ~= 1, slower than serial). Each spawned rank
 // resets itself to this snapshot, which still honors any taskset/cgroup
 // restriction present at process start.
+//
+// Linux-only: cpu_set_t / sched_getaffinity / pthread_setaffinity_np have no
+// macOS equivalent (no sched-affinity API). The pthreads backend still runs
+// there without pinning, but OMP is the default backend on macOS (param 8).
 struct LoadTimeAffinity {
   cpu_set_t mask;
   bool      valid = false;
@@ -38,6 +43,9 @@ inline void unbind_from_creator() {
     pthread_setaffinity_np(pthread_self(), sizeof(g_load_affinity.mask),
                            &g_load_affinity.mask);
 }
+#else
+inline void unbind_from_creator() {}   // no sched-affinity on this OS (macOS)
+#endif
 }  // namespace
 
 void prepare(SpsState& s) {

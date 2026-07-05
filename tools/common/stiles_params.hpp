@@ -103,8 +103,10 @@ inline constexpr int Path2Depth              = 22; // sTiles_set_path2_depth
 
 } // namespace param
 
-/// Default values, indexed by `sTiles::param::*`. The macOS variant differs
-/// only in TileTypeMode (slot 3): macOS = 0 (dense), Linux = 1 (semisparse).
+/// Default values, indexed by `sTiles::param::*`. The macOS variant differs in
+/// TileTypeMode (slot 3): macOS = 0 (dense), Linux = 1 (semisparse); and in
+/// UseOMP (slot 8): macOS = 1 (OMP, no sched-affinity for pthreads on macOS),
+/// Linux = 0 (pthreads).
 #ifdef __APPLE__
 inline constexpr int kDefaultParams[kNumParams] = {
     /* SemisparsePruningMode   */ 0,
@@ -115,7 +117,7 @@ inline constexpr int kDefaultParams[kNumParams] = {
     /* TileOrderingThreshold   */ -1,
     /* ForceNDOrdering         */ 0,
     /* InverseStorageMode      */ 1,
-    /* UseOMP                  */ 0,
+    /* UseOMP                  */ 1,
     /* SemisparseImpl          */ 2,
     /* GpuCompareMode          */ 0,
     /* GpuEnable               */ 1,

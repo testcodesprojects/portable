@@ -96,6 +96,49 @@ TreeLeaf* createOptimizedTree(int num_splits, int num_tasks, int leafheight, int
 
 
 /**
+ * @brief Deep-copy one red-tree (createOptimizedTree layout) for a second call.
+ *
+ * In a multi-call group every call shares ONE ordering, so the tree TOPOLOGY is
+ * identical. But NodeLeaf.x (GEMM accumulation scratch), NodeLeaf.dirty and
+ * TreeLeaf.dependency are WRITTEN by the reduction chol during factorization.
+ * Aliasing the primary's trees across concurrently-executing calls (nested
+ * parallelism) races on that scratch and corrupts the factor nondeterministically.
+ * Scalars are copied by value; the three mutable buffers are freshly allocated
+ * (zeroed) so each call owns its own scratch.
+ */
+inline TreeLeaf* cloneRedTree(const TreeLeaf* src, int group_index) {
+    if (!src) return nullptr;
+    TreeLeaf* t = MemoryManager::allocate<TreeLeaf>(1, group_index);
+    if (!t) return nullptr;
+    *t = *src;                                       // scalars (+ unused gold/half/max ptrs)
+    const int ns = src->num_splits;
+    t->nodes = MemoryManager::allocate<NodeLeaf>(ns, group_index);
+    for (int i = 0; i < ns; ++i) {
+        t->nodes[i] = src->nodes[i];                 // index / level / leafheight / leafwidth
+        t->nodes[i].dirty = 0;                        // clean scratch — no contributions yet
+        const long long len = (long long)src->nodes[i].leafheight * src->nodes[i].leafwidth;
+        t->nodes[i].x = MemoryManager::allocateZero<double>(len, group_index);
+    }
+    t->dependency = MemoryManager::allocateZero<int>(ns, group_index);
+    return t;
+}
+
+/**
+ * @brief Deep-copy the whole red-tree array so a secondary call has its own scratch.
+ * @param sep red_tree_separator_level; array size mirrors TREE_SETUP_STG2_STILES_PHASE_1:
+ *            num_sep = (sep^2 - sep)/2 + sep. Returns `src` unchanged when there is no tree.
+ */
+inline TreeLeaf** cloneRedTrees(TreeLeaf** src, int sep, int group_index) {
+    if (!src || sep <= 0) return src;
+    const int num_sep = (sep * sep - sep) / 2 + sep;
+    TreeLeaf** dst = MemoryManager::allocateZero<TreeLeaf*>(num_sep, group_index);
+    for (int i = 0; i < num_sep; ++i)
+        dst[i] = src[i] ? cloneRedTree(src[i], group_index) : nullptr;
+    return dst;
+}
+
+
+/**
  * @brief Creates a binary tree structure for managing GEMM operations.
  * @param num_gemm_operations Number of GEMM operations the tree should handle.
  * @param leafheight Height of each leaf node in the tree.

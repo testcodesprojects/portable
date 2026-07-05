@@ -1560,6 +1560,53 @@ sTiles::StatusCode collect_tasks(sTiles_call **call_info, TiledMatrix **scheme, 
                     (*sched.solve_bwd_offsets)[static_cast<std::size_t>(r)] =
                         static_cast<int>(sched.solve_bwd_tasks->size());
                 }
+
+                // ========== ROW-AFFINITY REBIN (semi only) ==========
+                // Mirror the primary solve schedule (see the mode==1 rebin
+                // above): the semisparse solve kernel syncs on B[m] via update
+                // counters and REQUIRES each m's writes to land on a single
+                // rank (m % r). The striped binning above does NOT guarantee
+                // that, so without this rebin the rescaled semi solve races on
+                // B[m] once r >= 3 -> wrong x (dense walks positionally and
+                // must keep the striped order, so it is left untouched).
+                {
+                    const int* _params = sTiles_get_params();
+                    const int  _tile_type_mode = _params ? _params[3] : 0;
+                    if (_tile_type_mode == 1) {
+                        auto rebin_by_row_and_sort = [&](
+                            std::vector<std::array<int,6>>& tasks_inout,
+                            std::vector<int>& offsets_inout)
+                        {
+                            std::vector<std::vector<std::array<int,6>>>
+                                by_owner(static_cast<std::size_t>(r));
+                            for (const auto& t : tasks_inout) {
+                                const int m = t[2];
+                                if (m < 0) continue;
+                                const std::size_t owner = (r > 0)
+                                    ? static_cast<std::size_t>(m % r)
+                                    : 0;
+                                by_owner[owner].push_back(t);
+                            }
+                            for (auto& bin : by_owner) {
+                                std::stable_sort(bin.begin(), bin.end(),
+                                    [](const std::array<int,6>& a_, const std::array<int,6>& b_) {
+                                        if (a_[1] != b_[1]) return a_[1] < b_[1];   // k
+                                        return a_[2] < b_[2];                        // m
+                                    });
+                            }
+                            tasks_inout.clear();
+                            offsets_inout.assign(static_cast<std::size_t>(r) + 1, 0);
+                            for (int core = 0; core < r; ++core) {
+                                offsets_inout[static_cast<std::size_t>(core)] = static_cast<int>(tasks_inout.size());
+                                auto& bin = by_owner[static_cast<std::size_t>(core)];
+                                tasks_inout.insert(tasks_inout.end(), bin.begin(), bin.end());
+                            }
+                            offsets_inout[static_cast<std::size_t>(r)] = static_cast<int>(tasks_inout.size());
+                        };
+                        rebin_by_row_and_sort(*sched.solve_fwd_tasks, *sched.solve_fwd_offsets);
+                        rebin_by_row_and_sort(*sched.solve_bwd_tasks, *sched.solve_bwd_offsets);
+                    }
+                }
             }
         }
 

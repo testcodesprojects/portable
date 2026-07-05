@@ -3359,7 +3359,15 @@ namespace sTiles{
                 }
             }
 
-            if (std::getenv("STILES_BCACHE_STATS"))
+            // STILES_BCACHE_STATS=1: report cross-iteration B-cache hit rate. Measured
+            // 0% on every workload (spacetime/lgm/bern + forced-no-gather): the key
+            // (route,index2,index3) already pins index1, so it only repeats on duplicate
+            // tasks the collector never emits. The cache is dead weight; a future cleanup
+            // should remove it (~200 lines) after re-confirming with this knob.
+            static const bool bcache_stats = [] {
+                const char* e = std::getenv("STILES_BCACHE_STATS"); return e && e[0] == '1';
+            }();
+            if (bcache_stats)
                 std::fprintf(stderr, "[bcache] pthreads rank %d hits=%ld misses=%ld\n",
                              rank, B_cache_hits, B_cache_misses);
 
@@ -4416,7 +4424,10 @@ namespace sTiles{
                 }
             }
 
-            if (std::getenv("STILES_BCACHE_STATS"))
+            static const bool bcache_stats = [] {
+                const char* e = std::getenv("STILES_BCACHE_STATS"); return e && e[0] == '1';
+            }();
+            if (bcache_stats)
                 std::fprintf(stderr, "[bcache] omp rank %d hits=%ld misses=%ld\n",
                              rank, B_cache_hits, B_cache_misses);
 

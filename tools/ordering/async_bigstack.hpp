@@ -1,15 +1,21 @@
 #pragma once
 //============================================================================
-// async_bigstack: like std::async(std::launch::async, f), but on macOS the
-// worker thread gets a LARGE stack.
+// async_bigstack: like std::async(std::launch::async, f), used for the ordering
+// bake-off (RCM / METIS-ND / SCOTCH candidates run "at once").
 //
-// Why: macOS gives std::thread / std::async worker threads only a 512 KB
-// stack, whereas on Linux they inherit the main thread's ~8 MB. METIS's
-// nested-dissection ordering recurses deeply on large graphs and overflows the
-// 512 KB stack, corrupting GKlib's thread-local memory core (observed as
-// "Unknown mop type" / SIGABRT on the spacetime matrix). Running the ordering
-// candidates on a pthread with a 256 MB stack removes the overflow while
-// keeping the concurrent bake-off. On Linux the default std::async is used.
+//   Linux : real std::async — the candidates run concurrently.
+//   macOS : the task runs on a 256 MB pthread stack AND is JOINED immediately,
+//           i.e. the bake-off is SERIALIZED (one candidate at a time).
+//
+// Why macOS is special: METIS uses GKlib, whose memory core is thread-local via
+// __thread — but on macOS that does NOT survive the concurrent bake-off. Two
+// candidates touching GKlib at once corrupt it ("Unknown mop type" /
+// "gkmcoreDel should never have been here" -> SIGABRT/SIGSEGV on the spacetime
+// matrix). Joining each task before starting the next removes the race. The
+// 256 MB stack additionally covers METIS's deep nested-dissection recursion
+// (macOS threads otherwise get only 512 KB). This serializes ONLY the ordering
+// bake-off (a small symbolic step); the numeric factorization / selinv / solve
+// parallelism is untouched.
 //============================================================================
 #include <future>
 #include <memory>
@@ -29,7 +35,7 @@ auto async_bigstack(F&& f) -> std::future<decltype(f())> {
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, static_cast<size_t>(256) << 20);   // 256 MB
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);        // future syncs completion
+    // JOINABLE (the default): we join below, which serializes the bake-off.
 
     // Heap-owned shared_ptr copy handed to the thread; `task` is retained here
     // so the synchronous fallback below can still run if thread creation fails.
@@ -44,7 +50,9 @@ auto async_bigstack(F&& f) -> std::future<decltype(f())> {
         }, heap);
     pthread_attr_destroy(&attr);
 
-    if (rc != 0) {              // thread creation failed: run inline so fut still resolves
+    if (rc == 0)
+        pthread_join(th, nullptr);   // wait now -> no two candidates in GKlib at once
+    else {                           // thread creation failed: run inline so fut still resolves
         delete heap;
         (*task)();
     }

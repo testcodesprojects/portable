@@ -83,6 +83,13 @@ ifeq ($(PLATFORM),macos)
     MKL_AVAILABLE := $(shell test -d "/opt/intel/oneapi/mkl" && echo 1 || echo 0)
     ifeq ($(MKL_AVAILABLE),1)
         BLAS_LIBS = -L/opt/intel/oneapi/mkl/latest/lib -lmkl_intel_lp64 -lmkl_core -lmkl_sequential
+    else ifneq ($(wildcard /opt/homebrew/opt/openblas/lib/libopenblas.dylib),)
+        # Apple Silicon Homebrew OpenBLAS — match the library's BLAS (the lib is
+        # built against OpenBLAS since Accelerate lacks LAPACKE).
+        BLAS_LIBS = -L/opt/homebrew/opt/openblas/lib -L/opt/homebrew/opt/lapack/lib -lopenblas -llapacke
+    else ifneq ($(wildcard /usr/local/opt/openblas/lib/libopenblas.dylib),)
+        # Intel-mac Homebrew OpenBLAS
+        BLAS_LIBS = -L/usr/local/opt/openblas/lib -L/usr/local/opt/lapack/lib -lopenblas -llapacke
     else
         BLAS_LIBS = -framework Accelerate
     endif

@@ -13,8 +13,8 @@
 #
 # BLAS per platform (auto-detected by make.inc):
 #   Linux x86_64  -> Intel MKL (embedded static, self-contained .so)
-#   macOS Intel   -> Accelerate framework (built-in, zero install)
-#   macOS Apple   -> Accelerate framework (built-in, zero install)
+#   macOS Intel   -> Homebrew OpenBLAS (+ lapack for LAPACKE)
+#   macOS Apple   -> Homebrew OpenBLAS (+ lapack for LAPACKE)
 #
 # Trigger: on every push/tag, or manually from the Actions tab.
 ########################################################################
@@ -77,11 +77,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y intel-oneapi-mkl-devel
 
-      # ---- macOS deps: real gfortran + libomp + hwloc from Homebrew ----------
-      # BLAS = Accelerate (built into macOS 13.3+), no install needed.
+      # ---- macOS deps: gfortran + libomp + hwloc + OpenBLAS from Homebrew ----
+      # BLAS = Homebrew OpenBLAS (+ lapack for the LAPACKE C interface). Apple's
+      # Accelerate ships CBLAS and Fortran LAPACK but NOT LAPACKE, which sTiles
+      # needs, so we use OpenBLAS (make.inc auto-detects it ahead of Accelerate).
       - name: macOS deps
         if: runner.os == 'macOS'
-        run: brew install gcc libomp hwloc
+        run: brew install gcc libomp hwloc openblas lapack
 
       # ---- Build (make.inc auto-detects platform, arch, BLAS, OpenMP) --------
       - name: Build libstiles

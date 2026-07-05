@@ -24,7 +24,8 @@ for portability (AVX2 baseline on x86-64; Apple Silicon native on arm64).
 - A C/C++/Fortran toolchain (`g++`/`gfortran` on Linux, or Homebrew `gcc` on macOS)
 - `hwloc` (topology detection) and a BLAS/LAPACK:
   - **Linux**: Intel MKL *or* OpenBLAS (`sudo apt install libopenblas-dev liblapacke-dev libhwloc-dev`)
-  - **macOS**: built-in Accelerate + `brew install gcc libomp hwloc`
+  - **macOS**: `brew install gcc libomp hwloc openblas lapack`
+    (OpenBLAS provides the LAPACKE interface that Apple's Accelerate lacks)
 - Network on the first build (fetches libxsmm; cached afterwards)
 
 The graph-ordering dependencies (SCOTCH, METIS + GKlib, and the AMD/CAMD/

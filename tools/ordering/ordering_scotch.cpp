@@ -67,9 +67,23 @@ static void build_scotch_graph(const int* rows, const int* cols, int nnz, int di
     }
 }
 
-// perm[iperm[i]] = i  for i in [0, N)
-static void build_perm_from_iperm(int* perm, const int* iperm, int N) {
-    for (int i = 0; i < N; ++i) perm[iperm[i]] = i;
+// perm[iperm[i]] = i  for i in [0, N). Validates that iperm is a permutation of
+// [0,N): a corrupt ordering from the backend (out-of-range index) would otherwise
+// scatter-write perm[garbage] to a wild address (seen as an arm64 EXC_BAD_ACCESS).
+// Returns false on a bad index so the caller can reject the ordering and fall back
+// to another bake-off candidate instead of crashing.
+static bool build_perm_from_iperm(int* perm, const int* iperm, int N) {
+    for (int i = 0; i < N; ++i) {
+        const int j = iperm[i];
+        if (j < 0 || j >= N) {
+            std::fprintf(stderr,
+                "build_perm_from_iperm: iperm[%d]=%d out of range [0,%d) — rejecting ordering\n",
+                i, j, N);
+            return false;
+        }
+        perm[j] = i;
+    }
+    return true;
 }
 
 // Gather: dst[i] = src[idx[i]]
@@ -101,7 +115,17 @@ static int runSCOTCH_impl(int** csr_i, int** csr_j, int N, int nnz, int m,
     // Set STILES_SCOTCH_CTX=0 to fall back to the original global-determinism +
     // mutex path (serial, exact-reproducible).
     const char* _e_ctx = std::getenv("STILES_SCOTCH_CTX");
+#if defined(__APPLE__)
+    // macOS: the ordering bake-off is serialized (see async_bigstack.hpp), so the
+    // per-call SCOTCH_Context — whose ONLY purpose is making concurrent SCOTCH calls
+    // thread-safe — buys nothing here. It is also the newest / least-portable SCOTCH
+    // path and was implicated in an arm64 EXC_BAD_ACCESS inside runSCOTCH_impl. Default
+    // to the classic serialized path (global determinism + g_scotch_global_mutex), which
+    // is the originally validated one. STILES_SCOTCH_CTX=1 forces the context path back on.
+    const bool use_ctx = (_e_ctx && std::atoi(_e_ctx) == 1);
+#else
     const bool use_ctx = !(_e_ctx && std::atoi(_e_ctx) == 0);  // DEFAULT ON (parallel SCOTCH); STILES_SCOTCH_CTX=0 forces the serial mutex path
+#endif
     std::unique_lock<std::mutex> scotch_lock(g_scotch_global_mutex, std::defer_lock);
     if (!use_ctx) {
         // Force SCOTCH into deterministic mode (global) + serialize callers.
@@ -251,7 +275,10 @@ static int runSCOTCH_impl(int** csr_i, int** csr_j, int N, int nnz, int m,
 
     for (int i = 0; i < dim; ++i) (*iperm)[i] = (int)sp[i];
     for (int i = dim; i < N;   ++i) (*iperm)[i] = i;
-    build_perm_from_iperm(*perm, *iperm, N);
+    if (!build_perm_from_iperm(*perm, *iperm, N)) {
+        std::fprintf(stderr, "runSCOTCH: SCOTCH returned an invalid permutation (dim=%d, N=%d)\n", dim, N);
+        return 1;   // reject: caller falls back to another ordering (or identity)
+    }
 
     if (tree_out) {
         const int cblknbr = static_cast<int>(cblknbr_out);
@@ -282,7 +309,13 @@ int runASCOTCH(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, int*
     // Same determinism + serialization as runSCOTCH_impl (STILES_SCOTCH_CTX: per-call
     // context -> no mutex, runs concurrently with other SCOTCH calls).
     const char* _e_ctx = std::getenv("STILES_SCOTCH_CTX");
+#if defined(__APPLE__)
+    // See runSCOTCH_impl: on macOS the bake-off is serialized, so default to the
+    // classic (context-free) SCOTCH path. STILES_SCOTCH_CTX=1 forces the context on.
+    const bool use_ctx = (_e_ctx && std::atoi(_e_ctx) == 1);
+#else
     const bool use_ctx = !(_e_ctx && std::atoi(_e_ctx) == 0);  // DEFAULT ON (parallel SCOTCH); STILES_SCOTCH_CTX=0 forces the serial mutex path
+#endif
     std::unique_lock<std::mutex> scotch_lock(g_scotch_global_mutex, std::defer_lock);
     if (!use_ctx) {
         setenv("SCOTCH_DETERMINISTIC", "1", 1);
@@ -384,7 +417,11 @@ int runASCOTCH(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, int*
 
     for (int i = 0; i < dim; ++i) (*iperm)[i] = (int)scotch_perm[i];
     for (int i = dim; i < N;   ++i) (*iperm)[i] = i;
-    build_perm_from_iperm(*perm, *iperm, N);
+    if (!build_perm_from_iperm(*perm, *iperm, N)) {
+        std::fprintf(stderr, "runASCOTCH: SCOTCH returned an invalid permutation (dim=%d, N=%d)\n", dim, N);
+        std::free(save_rows); std::free(save_cols); std::free(pperm);
+        return 1;
+    }
 
     if (double_perm) {
         // Restore original sparsity pattern for caller
@@ -402,12 +439,16 @@ int runASCOTCH(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, int*
         gather_int(newperm, *iperm, pperm, N);
 
         std::memcpy(*iperm, newperm, N * sizeof(int));
-        build_perm_from_iperm(*perm, *iperm, N);
+        const bool perm_ok = build_perm_from_iperm(*perm, *iperm, N);
 
         std::free(newperm);
         std::free(save_rows);
         std::free(save_cols);
         std::free(pperm);
+        if (!perm_ok) {
+            std::fprintf(stderr, "runASCOTCH: composed permutation invalid (N=%d)\n", N);
+            return 1;
+        }
     }
 
     return 0;

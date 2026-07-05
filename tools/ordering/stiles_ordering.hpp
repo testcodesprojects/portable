@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "async_bigstack.hpp"   // big-stack async for the ordering bake-off (macOS)
 #include "fill-in/symbolic_chol_fillin.hpp"
 #include "fill-in/symbolic_chol_fillin_left.hpp"
 
@@ -1882,7 +1883,7 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
         // candidates (via a parallel-capable mask) was measured slower and dropped.
         std::vector<std::future<void>> elem_futures(n_ord);
         for (int i = 0; i < n_ord; ++i) {
-            elem_futures[i] = std::async(std::launch::async, [&, i]() {
+            elem_futures[i] = sTiles::async_bigstack([&, i]() {
                 auto& res = ord_results[i];
                 // External/Fortran orderings (id>=12, id<40, id!=21) allocate O(N) heap — skip on very large N.
                 // SCOTCH variants (id=41,42) and METIS direct (id=21) are fine for large matrices.
@@ -2072,7 +2073,7 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
                     std::mutex tl_graveyard_mutex;
 
                     for (int i = 0; i < n_to; ++i) {
-                        tl_futures[i] = std::async(std::launch::async, [&, i]() {
+                        tl_futures[i] = sTiles::async_bigstack([&, i]() {
                             auto& tr = tl_results[i];
                             const double t0 = omp_get_wtime();
 
@@ -2338,7 +2339,7 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
             if (parallel_eval) {
                 std::vector<std::future<EvalResult>> _ef(max_eval);
                 for (int i = 0; i < max_eval; ++i)
-                    _ef[i] = std::async(std::launch::async,
+                    _ef[i] = sTiles::async_bigstack(
                                         [&, i]() { return evaluate_candidate(*candidates[i].perm_ptr, inner_threads); });
                 for (int i = 0; i < max_eval; ++i)
                     evals[i] = _ef[i].get();

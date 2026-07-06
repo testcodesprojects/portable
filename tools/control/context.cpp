@@ -1,6 +1,7 @@
 
 
 #include <stdlib.h>
+#include <thread>          // std::thread::hardware_concurrency (portable core count)
 #if defined( _WIN32 ) || defined( _WIN64 )
 #include "stileswinthread.h"
 #else
@@ -80,7 +81,11 @@ int stiles_context_create_once_all(int num_indices) {
     if (g_context_array_ptr != NULL) return 0; // Already initialized
     if (num_indices <= 0) return -1;
 
+#if defined(_WIN32) || defined(_WIN64)
+    long max_cores = (long) std::thread::hardware_concurrency();  // MinGW has no sysconf
+#else
     long max_cores = sysconf(_SC_NPROCESSORS_ONLN);
+#endif
     if (max_cores <= 0) max_cores = 256; // A safe fallback
 
     g_num_contexts = num_indices;

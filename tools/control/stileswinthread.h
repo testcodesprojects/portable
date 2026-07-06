@@ -35,6 +35,16 @@
 
 #ifndef STILESWINTHREAD_H
 #define STILESWINTHREAD_H
+
+/* MinGW-w64 (the toolchain R packages / cross-builds use for Windows) ships a
+ * REAL POSIX threads implementation (winpthreads). The MSVC pthread shim below
+ * would collide with its <pthread.h> — redefining pthread_t, pthread_mutex_t,
+ * pthread_cond_t, ... So on MinGW use the real threads; keep the shim only for
+ * a no-pthreads Windows toolchain (MSVC). */
+#if defined(__MINGW32__) || defined(__MINGW64__)
+#include <pthread.h>
+#include <unistd.h>
+#else
 #include <windows.h>
 
 typedef struct pthread_s {
@@ -84,4 +94,6 @@ STILES_DLLPORT int STILES_CDECL pthread_setconcurrency (int);
 
 STILES_DLLPORT unsigned int STILES_CDECL pthread_self_id(void);
 
-#endif
+#endif /* !defined(__MINGW32__) — end of MSVC pthread shim */
+
+#endif /* STILESWINTHREAD_H */

@@ -98,8 +98,14 @@ int main(int argc, char** argv) {
     if (!load_mtx(path, m)) return 2;
 
     // Keep stdout to just our result row (banner + [TIME] lines off).
+    // Portable setenv: MinGW has no POSIX setenv (uses _putenv_s).
+#if defined(_WIN32) || defined(_WIN64)
+    _putenv_s("STILES_NO_BANNER", "1");
+    _putenv_s("STILES_LOG_LEVEL", "0");
+#else
     setenv("STILES_NO_BANNER", "1", /*overwrite=*/0);
     setenv("STILES_LOG_LEVEL", "0", /*overwrite=*/0);
+#endif
 
     // ---- Configure (auto mode: the selector picks dense/semi/sparse) --------
     sTiles_expert_user();

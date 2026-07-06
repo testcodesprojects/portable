@@ -107,11 +107,14 @@ ifeq ($(PLATFORM),macos)
     MT_FEATURE_DEF := -DHAVE_EXECINFO_H -DHAVE_GETLINE
 else ifeq ($(PLATFORM),windows)
     # MinGW: no regex.h / execinfo.h and no _POSIX_C_SOURCE. GKlib detects
-    # Windows via WIN32 (gk_arch.h) and falls back to its bundled gkregex.h and
-    # its own getline, so the HAVE_* features must NOT be asserted here.
+    # Windows via WIN32 (gk_arch.h). Do NOT assert the HAVE_* features (so
+    # GKlib.h uses its bundled gkregex.h header), and DO define USE_GKREGEX so
+    # gkregex.c actually COMPILES its regcomp/regexec/regfree/regerror bodies
+    # (they're the whole file behind #ifdef USE_GKREGEX; Windows has no libc
+    # regex to fall back to, unlike Linux/macOS).
     GKMT_OS_DEF    := -DWIN32
     GK_POSIX_DEF   :=
-    GK_FEATURE_DEF :=
+    GK_FEATURE_DEF := -DUSE_GKREGEX
     MT_FEATURE_DEF :=
 else
     GKMT_OS_DEF    := -DLINUX

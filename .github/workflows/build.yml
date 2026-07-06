@@ -307,10 +307,25 @@ jobs:
       - name: Show toolchain + resolved build config
         run: |
           g++ --version | head -1
-          x86_64-w64-mingw32-g++ --version 2>/dev/null | head -1 || true
+          # Which Windows compiler macros does this toolchain define? (settles
+          # whether __MINGW32__ / _MSC_VER gating is correct.) Echo to the run
+          # SUMMARY page so it needs no log-digging.
+          echo '### MinGW toolchain macros' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo | g++ -dM -E -x c++ - | grep -iE '__MINGW|_MSC_VER|__UCRT|_WIN32|_WIN64' | sort | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
           make show-config USE_LIBXSMM=0 || true
       - name: Compile probe — sTiles-own sources under MinGW (syntax-only)
-        run: make cross-syntax USE_LIBXSMM=0
+        run: |
+          # Prove which commit we are building — rules out stale/old-code runs.
+          echo "probe building commit: $(git rev-parse --short HEAD)"
+          make cross-syntax USE_LIBXSMM=0 | tee probe.out
+          # Put the result straight on the run summary page (no log hunting).
+          echo '### Windows / MinGW compile probe' >> "$GITHUB_STEP_SUMMARY"
+          echo "commit \`$(git rev-parse --short HEAD)\`" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E 'compiled clean|^  FAIL ' probe.out >> "$GITHUB_STEP_SUMMARY" || echo '(no tally)' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
       - name: Surface the Windows portability gap
         if: always()
         run: |

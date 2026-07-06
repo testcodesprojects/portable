@@ -41,7 +41,10 @@
  * would collide with its <pthread.h> — redefining pthread_t, pthread_mutex_t,
  * pthread_cond_t, ... So on MinGW use the real threads; keep the shim only for
  * a no-pthreads Windows toolchain (MSVC). */
-#if defined(__MINGW32__) || defined(__MINGW64__)
+#if !defined(_MSC_VER)
+/* Any non-MSVC Windows compiler (MinGW-w64 MSVCRT/UCRT, clang) ships real
+ * winpthreads; only MSVC lacks pthreads and needs the shim below. Gating on
+ * !_MSC_VER (rather than __MINGW32__) is bulletproof across mingw variants. */
 #include <pthread.h>
 #include <unistd.h>
 #else
@@ -94,6 +97,6 @@ STILES_DLLPORT int STILES_CDECL pthread_setconcurrency (int);
 
 STILES_DLLPORT unsigned int STILES_CDECL pthread_self_id(void);
 
-#endif /* !defined(__MINGW32__) — end of MSVC pthread shim */
+#endif /* _MSC_VER — end of MSVC-only pthread shim */
 
 #endif /* STILESWINTHREAD_H */

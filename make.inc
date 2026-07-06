@@ -399,7 +399,9 @@ ifeq ($(BLAS_DETECTED),none)
     ifeq ($(OPENBLAS_PKG),1)
         BLAS_DETECTED := openblas
         LAPACKE_INC := $(shell pkg-config --cflags openblas 2>/dev/null)
-        LAPACKE_LIB := $(shell pkg-config --libs openblas 2>/dev/null) -llapacke
+        # MinGW/MSYS2 OpenBLAS bundles LAPACKE inside libopenblas (no separate
+        # liblapacke); Linux ships a standalone liblapacke, so append it there.
+        LAPACKE_LIB := $(shell pkg-config --libs openblas 2>/dev/null) $(if $(filter windows,$(PLATFORM)),,-llapacke)
         LAPACKE_DEF := -DUSE_GENERIC_LAPACKE
         $(info BLAS: OpenBLAS detected via pkg-config)
     else ifneq ($(wildcard /usr/include/openblas/cblas.h),)
@@ -488,7 +490,8 @@ ifeq ($(BLAS_DETECTED),armpl)
     endif
 endif
 
-LIBLAPACK := $(LAPACKE_LIB) -lpthread -lm -ldl
+# -ldl (dlopen) does not exist on Windows; POSIX platforms need it.
+LIBLAPACK := $(LAPACKE_LIB) -lpthread -lm $(if $(filter windows,$(PLATFORM)),,-ldl)
 
 #==============================================================================
 # Optional Features

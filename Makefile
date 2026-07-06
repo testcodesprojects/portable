@@ -148,6 +148,39 @@ endif
 LDFLAGS_SHARED := $(SANITIZE_LDFLAGS) $(OPENMP_LIBS) $(NUMA_LINK) \
                   $(HWLOC_LINK) $(CUDA_LIB) $(LIBLAPACK_LINK) $(GFORTRAN_LINK)
 
+# macOS: fold OpenBLAS + LAPACKE + libomp + hwloc + gfortran INTO the single
+# libstiles.dylib (the macOS analog of the Linux .so embedding MKL). Each dep's
+# STATIC archive is force-loaded, so the resulting ONE file references only
+# system libraries and runs on any Apple-Silicon Mac with no Homebrew. Homebrew
+# ships these .a on the build machine; the shipped dylib needs none of them.
+# Only engages when the full set of archives is present; otherwise the dynamic
+# LDFLAGS_SHARED above is kept and the CI dylibbundler step bundles the deps as
+# siblings instead (still Homebrew-free, just not a single file).
+ifeq ($(PLATFORM),macos)
+    MACOS_BREW  := $(shell brew --prefix 2>/dev/null || echo /opt/homebrew)
+    _OMP_A      := $(wildcard $(MACOS_BREW)/opt/libomp/lib/libomp.a)
+    _OPENBLAS_A := $(wildcard $(MACOS_BREW)/opt/openblas/lib/libopenblas.a)
+    _LAPACKE_A  := $(wildcard $(MACOS_BREW)/opt/lapack/lib/liblapacke.a)
+    _HWLOC_A    := $(wildcard $(MACOS_BREW)/opt/hwloc/lib/libhwloc.a)
+    _GFORTRAN_A := $(wildcard $(shell $(FC) -print-file-name=libgfortran.a 2>/dev/null))
+    _QUADMATH_A := $(wildcard $(shell $(FC) -print-file-name=libquadmath.a 2>/dev/null))
+    # NB: GCC's libgcc.a is deliberately NOT embedded — force-loading it next to
+    # clang's implicit compiler-rt triggers macOS "duplicate symbol" errors. The
+    # low-level helpers gfortran/quadmath need are provided by clang's builtins.
+    # $(and ...) is empty unless every critical archive was found.
+    ifneq ($(and $(_OMP_A),$(_OPENBLAS_A),$(_LAPACKE_A),$(_HWLOC_A),$(_GFORTRAN_A)),)
+        MACOS_EMBED_ARCHIVES := $(_OMP_A) $(_OPENBLAS_A) $(_LAPACKE_A) $(_HWLOC_A) \
+                                $(_GFORTRAN_A) $(_QUADMATH_A)
+        MACOS_EMBED := $(foreach a,$(MACOS_EMBED_ARCHIVES),-Wl,-force_load,$(a))
+        # -lxml2: hwloc's static archive needs it (system lib on macOS).
+        LDFLAGS_SHARED := $(SANITIZE_LDFLAGS) $(NUMA_LINK) $(CUDA_LIB) \
+                          $(MACOS_EMBED) -lxml2 -lpthread -lm
+        $(info macOS: embedding static archives into libstiles.dylib (single self-contained file): $(notdir $(MACOS_EMBED_ARCHIVES)))
+    else
+        $(info macOS: not all static archives present; keeping dynamic deps (dylibbundler will bundle them as siblings))
+    endif
+endif
+
 # Version script restricts the libstiles.so dynamic symbol table to the public
 # sTiles_*/STILES_* API. Internal symbols (and embedded MKL/SCOTCH/etc.
 # symbols) become local, preventing runtime clashes when sTiles is loaded

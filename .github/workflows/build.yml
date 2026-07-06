@@ -130,18 +130,19 @@ jobs:
           tail -3 build.log
 
       # ---- Make the macOS dylib SELF-CONTAINED (no Homebrew needed to run) ----
-      # The Linux .so embeds MKL statically, but the macOS .dylib links Homebrew
-      # OpenBLAS / LAPACKE / libomp / hwloc / gfortran dynamically by absolute
-      # path (/opt/homebrew/...), so it won't load on a Mac without those kegs.
-      # dylibbundler copies every non-system dependency (recursively) next to
-      # libstiles.dylib and rewrites its load commands to @loader_path, so the
-      # library finds its deps beside itself. Result: the artifact runs on ANY
-      # Apple-Silicon Mac with no Homebrew. (Static-embedding libgfortran on
-      # macOS is fragile; bundling is the robust, standard approach.)
-      - name: Bundle runtime deps into the macOS dylib (self-contained)
+      # PRIMARY: the Makefile force-loads the OpenBLAS/LAPACKE/libomp/hwloc/
+      # gfortran STATIC archives INTO libstiles.dylib, so it is ONE self-contained
+      # file (the macOS analog of the Linux .so embedding MKL). This step is the
+      # SAFETY NET: dylibbundler catches anything the static embed missed (copies
+      # it next to the dylib, @loader_path), so the artifact is always Homebrew-
+      # free even mid-bring-up. The report below says whether we hit single-file
+      # (0 siblings) or fell back to a bundle (N siblings = which archives the
+      # embed missed). (Static-embedding libgfortran on macOS is the fragile part;
+      # the net guarantees a working artifact while we converge on one file.)
+      - name: Make the macOS dylib self-contained (embed + net)
         if: runner.os == 'macOS'
         run: |
-          echo "::group::deps BEFORE bundling"
+          echo "::group::deps BEFORE net (after static embed)"
           otool -L dist/lib/libstiles.dylib || true
           echo "::endgroup::"
           # libstiles.so is a symlink to the dylib; operate on the real file.
@@ -151,17 +152,24 @@ jobs:
             --fix-file dist/lib/libstiles.dylib \
             --dest-dir dist/lib \
             --install-path @loader_path/ </dev/null
-          echo "::group::deps AFTER bundling"
+          echo "::group::deps AFTER net"
           otool -L dist/lib/libstiles.dylib
           ls -lh dist/lib/
           echo "::endgroup::"
-          # Assert nothing outside the bundle / system paths remains, in the
-          # dylib OR any bundled dependency (dylibbundler fixes them recursively).
+          # Single-file report: siblings = deps the static embed did NOT swallow.
+          siblings=$(ls dist/lib/*.dylib 2>/dev/null | grep -v '/libstiles\.dylib$' || true)
+          if [ -z "$siblings" ]; then
+            echo "✅ SINGLE FILE: libstiles.dylib embeds every dependency."
+          else
+            echo "⚠️  bundled as siblings (static embed missed these):"; echo "$siblings"
+          fi
+          # Hard requirement (either way): no absolute third-party path remains,
+          # in the dylib OR any bundled dependency.
           if otool -L dist/lib/*.dylib | grep -E '/opt/homebrew|/usr/local/(opt|Cellar)|/opt/intel'; then
             echo "::error::a third-party dylib dependency is still referenced by absolute path"
             exit 1
           fi
-          echo "OK: macOS dylib is self-contained (@loader_path + system libs only)"
+          echo "OK: macOS dylib is self-contained (system libs only; no Homebrew)"
 
       - name: Sanity check the built library
         run: |

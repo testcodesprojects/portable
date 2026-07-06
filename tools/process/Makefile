@@ -167,6 +167,14 @@ ifeq ($(PLATFORM),linux)
     SCO_AFFINITY_DEF := -DCOMMON_PTHREAD_AFFINITY_LINUX
     SCO_OS_DEF       :=
     SCO_COMPRESS_DEF := -DCOMMON_FILE_COMPRESS_BZ2 -DCOMMON_FILE_COMPRESS_GZ -DCOMMON_FILE_COMPRESS_LZMA
+else ifeq ($(PLATFORM),windows)
+    # -DCOMMON_OS_WINDOWS makes SCOTCH's common.h take its Windows path
+    # (io.h/windows.h, skip unistd.h, no sys/resource.h|sys/time.h — those are
+    # gated on macOS's COMMON_TIMING_OLD, which must NOT be set here). No
+    # compression libs (parity with SCOTCH_EXTRA_LIBS being Linux-only).
+    SCO_AFFINITY_DEF :=
+    SCO_OS_DEF       := -DCOMMON_OS_WINDOWS
+    SCO_COMPRESS_DEF :=
 else
     SCO_AFFINITY_DEF :=
     SCO_OS_DEF       := -DCOMMON_OS_MACOS

@@ -26,7 +26,7 @@ $(LIB_STATIC): $(LIB_OBJ) | $(LIB_DIR)
 	$(RANLIB) $@
 
 $(LIB_SHARED): $(LIB_OBJ) | $(LIB_DIR)
-	$(CXX) $(SHLDFLAGS) $(LIB_OBJ) -o $@ $(LDFLAGS)
+	$(CXX) $(SHLDFLAGS) $(LIB_OBJ) -o $@ $(OPENMP_FLAGS) $(LDFLAGS)
 
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@

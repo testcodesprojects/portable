@@ -123,7 +123,11 @@ else
     MT_FEATURE_DEF := -DHAVE_EXECINFO_H -DHAVE_GETLINE
 endif
 GK_INC := $(GKLIB_DIR)/include
-GK_CFLAGS := $(METIS_INLINE_OPT) -fPIC -fno-strict-aliasing -I$(GK_INC) \
+# gcc 16 (MinGW UCRT) defaults to C23, where bool/true/false are keywords and
+# gkregex.c's old-style `enum {false,true} bool` is illegal. Pin GKlib to gnu11
+# on Windows (pre-C23, still has C11 features). Linux/macOS keep their default.
+GK_STD := $(if $(filter windows,$(PLATFORM)),-std=gnu11,)
+GK_CFLAGS := $(METIS_INLINE_OPT) -fPIC -fno-strict-aliasing -I$(GK_INC) $(GK_STD) \
              $(GK_FEATURE_DEF) $(GKMT_OS_DEF) -DNDEBUG2 \
              $(GK_POSIX_DEF) -D__thread=__thread
 MT_CFLAGS := $(METIS_INLINE_OPT) -fPIC -fno-strict-aliasing -std=c99 \

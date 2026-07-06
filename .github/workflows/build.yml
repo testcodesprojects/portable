@@ -97,7 +97,7 @@ jobs:
       # needs, so we use OpenBLAS (make.inc auto-detects it ahead of Accelerate).
       - name: macOS deps
         if: runner.os == 'macOS'
-        run: brew install gcc libomp hwloc openblas lapack
+        run: brew install gcc libomp hwloc openblas lapack dylibbundler
 
       # ---- Build (make.inc auto-detects platform, arch, BLAS, OpenMP) --------
       # USE_LIBXSMM=0 on macOS: libxsmm's build clones its unstable `main` branch
@@ -128,6 +128,40 @@ jobs:
             exit 1
           fi
           tail -3 build.log
+
+      # ---- Make the macOS dylib SELF-CONTAINED (no Homebrew needed to run) ----
+      # The Linux .so embeds MKL statically, but the macOS .dylib links Homebrew
+      # OpenBLAS / LAPACKE / libomp / hwloc / gfortran dynamically by absolute
+      # path (/opt/homebrew/...), so it won't load on a Mac without those kegs.
+      # dylibbundler copies every non-system dependency (recursively) next to
+      # libstiles.dylib and rewrites its load commands to @loader_path, so the
+      # library finds its deps beside itself. Result: the artifact runs on ANY
+      # Apple-Silicon Mac with no Homebrew. (Static-embedding libgfortran on
+      # macOS is fragile; bundling is the robust, standard approach.)
+      - name: Bundle runtime deps into the macOS dylib (self-contained)
+        if: runner.os == 'macOS'
+        run: |
+          echo "::group::deps BEFORE bundling"
+          otool -L dist/lib/libstiles.dylib || true
+          echo "::endgroup::"
+          # libstiles.so is a symlink to the dylib; operate on the real file.
+          # </dev/null: if dylibbundler can't resolve a dep it prompts for a
+          # path interactively; EOF turns that would-be hang into a fast fail.
+          dylibbundler --overwrite-files --bundle-deps --create-dir \
+            --fix-file dist/lib/libstiles.dylib \
+            --dest-dir dist/lib \
+            --install-path @loader_path/ </dev/null
+          echo "::group::deps AFTER bundling"
+          otool -L dist/lib/libstiles.dylib
+          ls -lh dist/lib/
+          echo "::endgroup::"
+          # Assert nothing outside the bundle / system paths remains, in the
+          # dylib OR any bundled dependency (dylibbundler fixes them recursively).
+          if otool -L dist/lib/*.dylib | grep -E '/opt/homebrew|/usr/local/(opt|Cellar)|/opt/intel'; then
+            echo "::error::a third-party dylib dependency is still referenced by absolute path"
+            exit 1
+          fi
+          echo "OK: macOS dylib is self-contained (@loader_path + system libs only)"
 
       - name: Sanity check the built library
         run: |
@@ -165,6 +199,7 @@ jobs:
           name: libstiles-${{ matrix.name }}
           path: |
             dist/lib/libstiles.*
+            dist/lib/*.dylib
             dist/include/stiles.h
             dist/lib/pkgconfig/stiles.pc
 

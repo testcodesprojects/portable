@@ -158,18 +158,24 @@ LDFLAGS_SHARED := $(SANITIZE_LDFLAGS) $(OPENMP_LIBS) $(NUMA_LINK) \
 # siblings instead (still Homebrew-free, just not a single file).
 ifeq ($(PLATFORM),macos)
     MACOS_BREW  := $(shell brew --prefix 2>/dev/null || echo /opt/homebrew)
-    _OMP_A      := $(wildcard $(MACOS_BREW)/opt/libomp/lib/libomp.a)
-    _OPENBLAS_A := $(wildcard $(MACOS_BREW)/opt/openblas/lib/libopenblas.a)
-    _LAPACKE_A  := $(wildcard $(MACOS_BREW)/opt/lapack/lib/liblapacke.a)
-    _HWLOC_A    := $(wildcard $(MACOS_BREW)/opt/hwloc/lib/libhwloc.a)
+    # Wildcards catch the versioned/plain archive names Homebrew uses
+    # (e.g. libopenblas.a or libopenblasp-r0.3.33.a). LAPACKE is taken from
+    # OpenBLAS's OWN static archive (OpenBLAS builds the LAPACKE C interface in),
+    # so we do NOT depend on Homebrew's `lapack` keg, which ships dylibs only
+    # (no liblapacke.a — that missing archive is what defeated the first embed).
+    _OMP_A      := $(firstword $(wildcard $(MACOS_BREW)/opt/libomp/lib/libomp*.a))
+    _OPENBLAS_A := $(firstword $(wildcard $(MACOS_BREW)/opt/openblas/lib/libopenblas*.a))
+    _HWLOC_A    := $(firstword $(wildcard $(MACOS_BREW)/opt/hwloc/lib/libhwloc*.a))
     _GFORTRAN_A := $(wildcard $(shell $(FC) -print-file-name=libgfortran.a 2>/dev/null))
     _QUADMATH_A := $(wildcard $(shell $(FC) -print-file-name=libquadmath.a 2>/dev/null))
+    # One line so the CI log records exactly what was / wasn't found.
+    $(info macOS embed probe: omp=[$(_OMP_A)] openblas=[$(_OPENBLAS_A)] hwloc=[$(_HWLOC_A)] gfortran=[$(_GFORTRAN_A)] quadmath=[$(_QUADMATH_A)])
     # NB: GCC's libgcc.a is deliberately NOT embedded — force-loading it next to
     # clang's implicit compiler-rt triggers macOS "duplicate symbol" errors. The
     # low-level helpers gfortran/quadmath need are provided by clang's builtins.
     # $(and ...) is empty unless every critical archive was found.
-    ifneq ($(and $(_OMP_A),$(_OPENBLAS_A),$(_LAPACKE_A),$(_HWLOC_A),$(_GFORTRAN_A)),)
-        MACOS_EMBED_ARCHIVES := $(_OMP_A) $(_OPENBLAS_A) $(_LAPACKE_A) $(_HWLOC_A) \
+    ifneq ($(and $(_OMP_A),$(_OPENBLAS_A),$(_HWLOC_A),$(_GFORTRAN_A)),)
+        MACOS_EMBED_ARCHIVES := $(_OMP_A) $(_OPENBLAS_A) $(_HWLOC_A) \
                                 $(_GFORTRAN_A) $(_QUADMATH_A)
         MACOS_EMBED := $(foreach a,$(MACOS_EMBED_ARCHIVES),-Wl,-force_load,$(a))
         # -lxml2: hwloc's static archive needs it (system lib on macOS).

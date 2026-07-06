@@ -99,6 +99,25 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install gcc libomp hwloc openblas lapack dylibbundler
 
+      # Ground truth for the single-file embed: which STATIC archives does the
+      # runner actually have, and does OpenBLAS's .a carry the LAPACKE symbols
+      # sTiles needs (so we can drop the separate lapack keg)?
+      - name: Probe available static archives (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          for k in libomp openblas hwloc lapack; do
+            echo "== $k =="
+            ls -la "$(brew --prefix $k 2>/dev/null)/lib/"*.a 2>/dev/null || echo "  (no .a shipped)"
+          done
+          echo "== gfortran/quadmath (from gcc) =="
+          gfortran -print-file-name=libgfortran.a
+          gfortran -print-file-name=libquadmath.a
+          OB="$(brew --prefix openblas)/lib/libopenblas.a"
+          if [ -f "$OB" ]; then
+            echo "== LAPACKE symbols in libopenblas.a (want > 0) =="
+            nm "$OB" 2>/dev/null | grep -c 'LAPACKE_dpotrf' || true
+          fi
+
       # ---- Build (make.inc auto-detects platform, arch, BLAS, OpenMP) --------
       # USE_LIBXSMM=0 on macOS: libxsmm's build clones its unstable `main` branch
       # and compiles it with -Werror under the newest brew compilers, which is
@@ -128,6 +147,8 @@ jobs:
             exit 1
           fi
           tail -3 build.log
+          # Surface the macOS static-embed decision (buried in the verbose log).
+          grep -iE 'macOS( embed probe| *:)' build.log || true
 
       # ---- Make the macOS dylib SELF-CONTAINED (no Homebrew needed to run) ----
       # PRIMARY: the Makefile force-loads the OpenBLAS/LAPACKE/libomp/hwloc/
@@ -152,6 +173,15 @@ jobs:
             --fix-file dist/lib/libstiles.dylib \
             --dest-dir dist/lib \
             --install-path @loader_path/ </dev/null
+          # dylibbundler can leave a DUPLICATE '@loader_path/' LC_RPATH that
+          # Sonoma+ dyld rejects ("duplicate LC_RPATH"). Deps are referenced via
+          # @loader_path/ in the load command itself (no rpath needed), so strip
+          # every @loader_path rpath from each dylib, then re-ad-hoc-sign (arm64
+          # requires a valid signature after any load-command edit).
+          for f in dist/lib/*.dylib; do
+            while install_name_tool -delete_rpath @loader_path/ "$f" 2>/dev/null; do :; done
+            codesign -f -s - "$f" >/dev/null 2>&1 || true
+          done
           echo "::group::deps AFTER net"
           otool -L dist/lib/libstiles.dylib
           ls -lh dist/lib/

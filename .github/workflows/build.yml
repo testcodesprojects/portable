@@ -43,20 +43,18 @@ jobs:
             os: ubuntu-latest
             arch: x86_64
           - name: macos-apple-arm64
-            os: macos-14     # Apple Silicon (M1) runner
+            os: macos-14           # Apple Silicon (M1) runner
+            arch: arm64
+          - name: linux-arm64
+            os: ubuntu-24.04-arm   # GitHub arm64 Linux runner (free on public repos)
             arch: arm64
           # NOTE: no macos-intel-x86_64 job. GitHub is retiring the Intel
           # (macos-13) runners, so that job just sits in the queue forever
-          # ("waiting for a runner"). The Linux x86_64 build above already ships
-          # full AVX2 x86_64 performance for x86 users, and arm64 covers every
-          # modern Mac. To add a native Intel-Mac dylib back, either restore a
-          # macos-13 entry (if runners return) or cross-build x86_64 on the arm64
-          # runner via a Rosetta x86_64 toolchain (the build has Fortran, so it
-          # needs x86_64 gfortran too).
-          # Optional: uncomment for a Linux arm64 (.so) build too.
-          # - name: linux-arm64
-          #   os: ubuntu-24.04-arm
-          #   arch: arm64
+          # ("waiting for a runner"). The Linux x86_64 build already ships full
+          # AVX2 x86_64 performance for x86 users, and arm64 (Mac + Linux) covers
+          # ARM. To add a native Intel-Mac dylib back, restore a macos-13 entry
+          # (if runners return) or cross-build x86_64 on the arm64 runner via a
+          # Rosetta x86_64 toolchain (needs x86_64 gfortran for the Fortran AMD).
 
     steps:
       - uses: actions/checkout@v4
@@ -77,8 +75,8 @@ jobs:
       # Simpler alternative: replace this whole step with
       #   sudo apt-get install -y libopenblas-dev liblapacke-dev
       # and make.inc auto-detects OpenBLAS instead (dynamic dep, no embedding).
-      - name: Install Intel MKL (Linux)
-        if: runner.os == 'Linux'
+      - name: Install Intel MKL (Linux x86_64)
+        if: runner.os == 'Linux' && matrix.arch == 'x86_64'
         run: |
           wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
             | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi.gpg > /dev/null
@@ -86,6 +84,12 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/oneAPI.list
           sudo apt-get update
           sudo apt-get install -y intel-oneapi-mkl-devel
+
+      # ---- Linux arm64 BLAS: OpenBLAS (MKL is x86-only). make.inc auto-detects
+      # OpenBLAS via pkg-config; the .so links it dynamically. ----
+      - name: Install OpenBLAS (Linux arm64)
+        if: runner.os == 'Linux' && matrix.arch == 'arm64'
+        run: sudo apt-get install -y libopenblas-dev liblapacke-dev
 
       # ---- macOS deps: gfortran + libomp + hwloc + OpenBLAS from Homebrew ----
       # BLAS = Homebrew OpenBLAS (+ lapack for the LAPACKE C interface). Apple's
@@ -102,11 +106,13 @@ jobs:
       # sTiles falls back to cblas_dgemm (OpenBLAS), so the build stays robust.
       - name: Build libstiles
         run: |
-          if [ "${{ runner.os }}" = "Linux" ]; then
+          if [ "${{ runner.os }}" = "Linux" ] && [ "${{ matrix.arch }}" = "x86_64" ]; then
             source /opt/intel/oneapi/setvars.sh || true
-            MAKEARGS="MARCH=avx2"                       # portable x86_64
+            MAKEARGS="MARCH=avx2"                       # Linux x86_64: MKL + AVX2
           else
-            MAKEARGS="USE_LIBXSMM=0"                    # macOS Apple Silicon (-mcpu=apple-m1)
+            # Linux arm64 (OpenBLAS) & macOS Apple Silicon (-mcpu=apple-m1).
+            # USE_LIBXSMM=0: skip the fragile libxsmm clone/build on arm64.
+            MAKEARGS="USE_LIBXSMM=0"
           fi
           # Capture the full (very verbose) build to a file; on failure surface
           # ONLY the errors + tail so the CI log stays short and readable

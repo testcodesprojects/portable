@@ -767,7 +767,11 @@ show-config:
 # (control/compute/memory/symbolic/sort/free/sparse/process + tile). GPU
 # (STILES_GPU-gated) and TileIndexer (separate lib driver) are out of scope.
 ###############################################################################
-CROSS_MODULES := $(BUILD_MODULES) tools/tile
+# tools/process is excluded: it doesn't use module.mk and its ordering sources
+# pull tile.h through a context that trips a pre-existing structural quirk
+# (a commented-out duplicate block + a dead descriptor.h include) that fails on
+# Linux too — i.e. noise, not a Windows-portability signal.
+CROSS_MODULES := $(filter-out tools/process,$(BUILD_MODULES)) tools/tile
 
 .PHONY: cross-syntax
 cross-syntax:

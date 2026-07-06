@@ -318,11 +318,13 @@ jobs:
       - name: Compile probe — sTiles-own sources under MinGW (syntax-only)
         run: |
           # Prove which commit we are building — rules out stale/old-code runs.
-          echo "probe building commit: $(git rev-parse --short HEAD)"
+          # (msys2 shell has no git; use the SHA GitHub injects.)
+          SHA="${GITHUB_SHA:0:7}"
+          echo "probe building commit: $SHA"
           make cross-syntax USE_LIBXSMM=0 | tee probe.out
           # Put the result straight on the run summary page (no log hunting).
           echo '### Windows / MinGW compile probe' >> "$GITHUB_STEP_SUMMARY"
-          echo "commit \`$(git rev-parse --short HEAD)\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "commit \`$SHA\`" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           grep -E 'compiled clean|^  FAIL ' probe.out >> "$GITHUB_STEP_SUMMARY" || echo '(no tally)' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"

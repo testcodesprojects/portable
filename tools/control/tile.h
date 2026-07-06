@@ -44,7 +44,7 @@
  #ifndef _STILES_TILE_H_
  #define _STILES_TILE_H_
  
- #if defined( _WIN32 ) || defined( _WIN64 )
+ #if defined(_MSC_VER)
  typedef __int64 int64_t;
  #else
  #include <inttypes.h>
@@ -132,7 +132,7 @@
  #ifndef _STILES_TILE_H_
  #define _STILES_TILE_H_
  
- #if defined( _WIN32 ) || defined( _WIN64 )
+ #if defined(_MSC_VER)
  typedef __int64 int64_t;
  #else
  #include <inttypes.h>

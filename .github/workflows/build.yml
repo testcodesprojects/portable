@@ -1,9 +1,15 @@
 ########################################################################
 # Build libstiles for every target OS/arch on real hardware.
 #
-# GitHub Actions rents you the machines you don't own (real Intel + Apple
-# Silicon Macs, real Linux), builds NATIVELY on each — no cross-compiling —
-# and collects the .so/.dylib as downloadable artifacts.
+# GitHub Actions rents you the machines you don't own (Apple Silicon Mac, real
+# Linux), builds NATIVELY on each — no cross-compiling — and collects the
+# .so/.dylib as downloadable artifacts.
+#
+# Two native builds ship: linux-x86_64 and macos-apple-arm64. There is no
+# Intel-Mac build: GitHub is retiring the Intel (macos-13) runners, so that job
+# just hangs forever waiting for a machine. The Linux x86_64 build already gives
+# full AVX2 x86_64 performance, and arm64 covers every modern Mac (see the note
+# on the matrix below for how to add Intel back if you ever need it).
 #
 # WHY no AVX2-vs-AVX512 matrix here: sTiles' hot FLOPs live in MKL/libxsmm,
 # which pick their widest CPU kernels at RUNTIME. So one portable build per
@@ -13,7 +19,6 @@
 #
 # BLAS per platform (auto-detected by make.inc):
 #   Linux x86_64  -> Intel MKL (embedded static, self-contained .so)
-#   macOS Intel   -> Homebrew OpenBLAS (+ lapack for LAPACKE)
 #   macOS Apple   -> Homebrew OpenBLAS (+ lapack for LAPACKE)
 #
 # Trigger: on every push/tag, or manually from the Actions tab.
@@ -37,12 +42,17 @@ jobs:
           - name: linux-x86_64
             os: ubuntu-latest
             arch: x86_64
-          - name: macos-intel-x86_64
-            os: macos-13     # last Intel macOS runner
-            arch: x86_64
           - name: macos-apple-arm64
             os: macos-14     # Apple Silicon (M1) runner
             arch: arm64
+          # NOTE: no macos-intel-x86_64 job. GitHub is retiring the Intel
+          # (macos-13) runners, so that job just sits in the queue forever
+          # ("waiting for a runner"). The Linux x86_64 build above already ships
+          # full AVX2 x86_64 performance for x86 users, and arm64 covers every
+          # modern Mac. To add a native Intel-Mac dylib back, either restore a
+          # macos-13 entry (if runners return) or cross-build x86_64 on the arm64
+          # runner via a Rosetta x86_64 toolchain (the build has Fortran, so it
+          # needs x86_64 gfortran too).
           # Optional: uncomment for a Linux arm64 (.so) build too.
           # - name: linux-arm64
           #   os: ubuntu-24.04-arm
@@ -95,10 +105,8 @@ jobs:
           if [ "${{ runner.os }}" = "Linux" ]; then
             source /opt/intel/oneapi/setvars.sh || true
             MAKEARGS="MARCH=avx2"                       # portable x86_64
-          elif [ "${{ matrix.arch }}" = "arm64" ]; then
-            MAKEARGS="USE_LIBXSMM=0"                    # Apple Silicon (-mcpu=apple-m1)
           else
-            MAKEARGS="MARCH=avx2 USE_LIBXSMM=0"         # Intel Mac
+            MAKEARGS="USE_LIBXSMM=0"                    # macOS Apple Silicon (-mcpu=apple-m1)
           fi
           # Capture the full (very verbose) build to a file; on failure surface
           # ONLY the errors + tail so the CI log stays short and readable
@@ -154,12 +162,13 @@ jobs:
             dist/include/stiles.h
             dist/lib/pkgconfig/stiles.pc
 
-  # Diagnostic: build libstiles with AddressSanitizer on Apple Silicon and run
-  # the ordering-only driver on spacetime. SCOTCH corrupts the heap on arm64 for
-  # that matrix, but the identical run is CLEAN on Linux under both ASan and
-  # Valgrind — so the bug only exists in real arm64 execution. ASan instruments
-  # the arm64 code, so it prints the exact SCOTCH file:line that overflows, which
-  # is what we need to fix it. Non-gating (continue-on-error): purely a probe.
+  # Regression guard: build libstiles with AddressSanitizer on Apple Silicon and
+  # run the ordering-only driver on spacetime under ASan. This is the matrix that
+  # exposed the arm64 SCOTCH bug (the opaque SCOTCH_Ordering blob in scotch.h was
+  # sized on Linux, 24 B too small for macOS where LibOrder embeds a bigger
+  # pthread_mutex_t -> stack overflow at -O2/-O3). Fixed by bumping dummy[17]->
+  # dummy[24]; this job stays as a guard so a future SCOTCH/scotch.h change that
+  # re-introduces the undersize is caught here. Non-gating (continue-on-error).
   macos-asan-scotch:
     name: macos-asan-scotch-diagnostic
     runs-on: macos-14           # Apple Silicon
@@ -184,25 +193,3 @@ jobs:
           echo "::group::ASan — spacetime with SCOTCH context ON"
           STILES_SCOTCH_CTX=1 ./order_only mats/spacetime.mtx 1 40 || true
           echo "::endgroup::"
-
-  # Optional: merge the two macOS builds into one universal (fat) dylib that
-  # runs on both Intel and Apple Silicon. Delete this job if you'd rather ship
-  # the two separate dylibs.
-  macos-universal:
-    needs: build
-    runs-on: macos-14
-    steps:
-      - uses: actions/download-artifact@v4
-        with: { name: libstiles-macos-intel-x86_64, path: intel }
-      - uses: actions/download-artifact@v4
-        with: { name: libstiles-macos-apple-arm64, path: arm }
-      - name: lipo into a universal dylib
-        run: |
-          mkdir -p universal
-          lipo -create intel/dist/lib/libstiles.dylib arm/dist/lib/libstiles.dylib \
-               -output universal/libstiles.dylib
-          lipo -info universal/libstiles.dylib
-      - uses: actions/upload-artifact@v4
-        with:
-          name: libstiles-macos-universal
-          path: universal/libstiles.dylib

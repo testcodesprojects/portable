@@ -209,7 +209,7 @@ struct sTilesBlasSingleThreadInit {
     sTilesBlasSingleThreadInit() {
         // Fallback for BLAS libs that read the env but export no setter symbol
         // (respect an explicit user setting), then force it authoritatively.
-        setenv("OPENBLAS_NUM_THREADS", "1", /*overwrite=*/0);
+        stiles_setenv("OPENBLAS_NUM_THREADS", "1", /*overwrite=*/0);
         if (openblas_set_num_threads) openblas_set_num_threads(1);
     }
 };

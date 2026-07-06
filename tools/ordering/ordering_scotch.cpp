@@ -131,7 +131,7 @@ static int runSCOTCH_impl(int** csr_i, int** csr_j, int N, int nnz, int m,
     std::unique_lock<std::mutex> scotch_lock(g_scotch_global_mutex, std::defer_lock);
     if (!use_ctx) {
         // Force SCOTCH into deterministic mode (global) + serialize callers.
-        setenv("SCOTCH_DETERMINISTIC", "1", 1);
+        stiles_setenv("SCOTCH_DETERMINISTIC", "1", 1);
         scotch_lock.lock();
     }
 
@@ -316,7 +316,7 @@ int runASCOTCH(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, int*
     const bool use_ctx = !(_e_ctx && std::atoi(_e_ctx) == 0);
     std::unique_lock<std::mutex> scotch_lock(g_scotch_global_mutex, std::defer_lock);
     if (!use_ctx) {
-        setenv("SCOTCH_DETERMINISTIC", "1", 1);
+        stiles_setenv("SCOTCH_DETERMINISTIC", "1", 1);
         scotch_lock.lock();
     }
 

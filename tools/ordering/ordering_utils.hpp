@@ -10,6 +10,18 @@ extern thread_local bool g_nd_hub_skipped;
 #include "../memory/OrderingMemoryManager.hpp"
 #include "ordering_shared_csr.hpp"   // sTiles::SharedAdjCSR (shared bake-off graph)
 #include <cstddef>
+#include <cstdlib>
+
+// Portable setenv: POSIX setenv() vs Windows _putenv_s() (MinGW has no setenv).
+// Same 3-arg signature/semantics as POSIX setenv, including `overwrite`.
+static inline int stiles_setenv(const char* name, const char* value, int overwrite) {
+#if defined(_WIN32) || defined(_WIN64)
+    if (!overwrite && std::getenv(name)) return 0;   // don't clobber existing
+    return _putenv_s(name, value);
+#else
+    return ::setenv(name, value, overwrite);
+#endif
+}
 
 #include <iomanip>
 #include <sstream>

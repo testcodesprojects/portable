@@ -168,19 +168,24 @@ ifeq ($(PLATFORM),macos)
     _HWLOC_A    := $(firstword $(wildcard $(MACOS_BREW)/opt/hwloc/lib/libhwloc*.a))
     _GFORTRAN_A := $(wildcard $(shell $(FC) -print-file-name=libgfortran.a 2>/dev/null))
     _QUADMATH_A := $(wildcard $(shell $(FC) -print-file-name=libquadmath.a 2>/dev/null))
+    _GCC_A      := $(wildcard $(shell $(FC) -print-file-name=libgcc.a 2>/dev/null))
     # One line so the CI log records exactly what was / wasn't found.
-    $(info macOS embed probe: omp=[$(_OMP_A)] openblas=[$(_OPENBLAS_A)] hwloc=[$(_HWLOC_A)] gfortran=[$(_GFORTRAN_A)] quadmath=[$(_QUADMATH_A)])
-    # NB: GCC's libgcc.a is deliberately NOT embedded — force-loading it next to
-    # clang's implicit compiler-rt triggers macOS "duplicate symbol" errors. The
-    # low-level helpers gfortran/quadmath need are provided by clang's builtins.
+    $(info macOS embed probe: omp=[$(_OMP_A)] openblas=[$(_OPENBLAS_A)] hwloc=[$(_HWLOC_A)] gfortran=[$(_GFORTRAN_A)] quadmath=[$(_QUADMATH_A)] gcc=[$(_GCC_A)])
     # $(and ...) is empty unless every critical archive was found.
     ifneq ($(and $(_OMP_A),$(_OPENBLAS_A),$(_HWLOC_A),$(_GFORTRAN_A)),)
         MACOS_EMBED_ARCHIVES := $(_OMP_A) $(_OPENBLAS_A) $(_HWLOC_A) \
                                 $(_GFORTRAN_A) $(_QUADMATH_A)
         MACOS_EMBED := $(foreach a,$(MACOS_EMBED_ARCHIVES),-Wl,-force_load,$(a))
-        # -lxml2: hwloc's static archive needs it (system lib on macOS).
+        # Transitive static-link deps of the force-loaded archives:
+        #  * libgcc.a as a PLAIN archive (not force_load): resolves the soft-float
+        #    long-double helpers gfortran/quadmath reference (__unordtf2, __*tf2)
+        #    that clang's compiler-rt lacks on arm64. Plain = pull only undefined
+        #    symbols, so no duplicate-symbol clash with compiler-rt.
+        #  * -lxml2: hwloc.a needs it. Frameworks: hwloc's macOS topology backends
+        #    use IOKit + CoreFoundation, and its GPU discovery uses OpenCL.
         LDFLAGS_SHARED := $(SANITIZE_LDFLAGS) $(NUMA_LINK) $(CUDA_LIB) \
-                          $(MACOS_EMBED) -lxml2 -lpthread -lm
+                          $(MACOS_EMBED) $(_GCC_A) -lxml2 -lpthread -lm \
+                          -framework OpenCL -framework CoreFoundation -framework IOKit
         $(info macOS: embedding static archives into libstiles.dylib (single self-contained file): $(notdir $(MACOS_EMBED_ARCHIVES)))
     else
         $(info macOS: not all static archives present; keeping dynamic deps (dylibbundler will bundle them as siblings))

@@ -401,6 +401,13 @@ ifeq ($(PLATFORM),macos)
 	    $(SUITESPARSE_LINK_LIBS) $(SCOTCH_LINK_LIBS) $(LIBXSMM_LINK_LIBS) $(CXXFLAGS) $(LDFLAGS_SHARED)
 	@# Create .so symlink for compatibility
 	@ln -sf libstiles.dylib lib/libstiles.so
+else ifeq ($(PLATFORM),windows)
+	@echo "Creating shared library libstiles.dll (Windows/MinGW)"
+	$(CXX) -shared -o lib/libstiles.dll \
+	    -Wl,--out-implib,lib/libstiles.dll.a \
+	    -Wl,--whole-archive lib/libstiles.a -Wl,--no-whole-archive \
+	    tools/libs/libtileindexer.a $(METIS_LINK_FLAGS_LINUX) \
+	    $(SUITESPARSE_LINK_LIBS) $(SCOTCH_LINK_LIBS) $(LIBXSMM_LINK_LIBS) $(CXXFLAGS) $(LDFLAGS_SHARED)
 else
 	@echo "Creating shared library libstiles.so (Linux)"
 	$(CXX) -shared -o lib/libstiles.so \
@@ -767,11 +774,7 @@ show-config:
 # (control/compute/memory/symbolic/sort/free/sparse/process + tile). GPU
 # (STILES_GPU-gated) and TileIndexer (separate lib driver) are out of scope.
 ###############################################################################
-# tools/process is excluded: it doesn't use module.mk and its ordering sources
-# pull tile.h through a context that trips a pre-existing structural quirk
-# (a commented-out duplicate block + a dead descriptor.h include) that fails on
-# Linux too — i.e. noise, not a Windows-portability signal.
-CROSS_MODULES := $(filter-out tools/process,$(BUILD_MODULES)) tools/tile
+CROSS_MODULES := $(BUILD_MODULES) tools/tile
 
 .PHONY: cross-syntax
 cross-syntax:

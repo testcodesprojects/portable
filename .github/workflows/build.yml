@@ -342,3 +342,39 @@ jobs:
           name: windows-mingw-probe-log
           path: cross-syntax.err
           if-no-files-found: ignore
+
+      # ---- Attempt a REAL Windows build: compile EVERYTHING (sTiles + vendored
+      # SCOTCH/METIS/GKlib/SuiteSparse + Fortran ordering) and LINK libstiles.dll.
+      # This is the layer beyond the syntax probe; expect iteration on the
+      # vendored / Fortran / link surface. Non-gating: surfaces the first errors
+      # so we can fix them like we did the compile gap. On success, uploads the
+      # .dll + a minimal smoke test (factor a small matrix) proving it runs.
+      - name: Attempt real Windows build (libstiles.dll)
+        if: always()
+        run: |
+          echo '### Windows build (make all -> libstiles.dll)' >> "$GITHUB_STEP_SUMMARY"
+          if make all USE_LIBXSMM=0 > winbuild.log 2>&1; then
+            echo "✅ libstiles.dll linked" | tee -a "$GITHUB_STEP_SUMMARY"
+            ls -lh lib/libstiles.* 2>/dev/null
+          else
+            echo "❌ build not linking yet (bring-up) — first errors:"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -nE 'error:|fatal error:| Error [0-9]+|undefined reference|ld:|cannot find -l' winbuild.log | head -30 | tee -a "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "::group::winbuild.log tail"; tail -40 winbuild.log; echo "::endgroup::"
+          fi
+      - name: Smoke test the Windows dll (if it built)
+        if: always()
+        run: |
+          [ -f lib/libstiles.dll ] || { echo "no dll yet — skipping smoke"; exit 0; }
+          cd bench && make -s speedtest 2>/dev/null && ./speedtest mats/ferris.mtx 2 40 || echo "dll built but smoke not wired yet"
+      - name: Upload Windows dll (if built)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: libstiles-windows-x86_64
+          path: |
+            lib/libstiles.dll
+            lib/libstiles.dll.a
+            tools/include/stiles.h
+          if-no-files-found: ignore

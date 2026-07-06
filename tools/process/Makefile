@@ -226,6 +226,17 @@ clean:
 
 cleanall: clean
 
+# syntax : compile-check this module's sTiles-own SRC (ordering wrappers +
+# process.cpp + stiles_params.cpp) WITHOUT codegen/link — for the top-level
+# `cross-syntax` Windows/MinGW probe. Vendored SuiteSparse/Fortran excluded.
+SYNTAX_ERR ?= /dev/null
+syntax:
+	@for s in $(SRC); do \
+	    if $(CXX) $(CXXFLAGS) $(INC) -fsyntax-only $$s 2>>$(SYNTAX_ERR); then \
+	        echo "  ok    $$s"; \
+	    else echo "  FAIL  $$s"; fi; \
+	done
+
 -include $(DEP)
 
-.PHONY: all clean cleanall
+.PHONY: all clean cleanall syntax

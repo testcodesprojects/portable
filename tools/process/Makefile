@@ -101,20 +101,32 @@ METIS_INLINE_OPT := $(filter-out -flto% -funroll-loops,$(OPT_FLAGS))
 # Linux, -DMACOS on Apple; _POSIX_C_SOURCE is Linux-only there too). The
 # Linux flag strings below stay byte-identical to the validated build.
 ifeq ($(PLATFORM),macos)
-    GKMT_OS_DEF  := -DMACOS
-    GK_POSIX_DEF :=
+    GKMT_OS_DEF    := -DMACOS
+    GK_POSIX_DEF   :=
+    GK_FEATURE_DEF := -DHAVE_EXEC_INFO_H -DHAVE_GETLINE -DHAVE_REGEX_H
+    MT_FEATURE_DEF := -DHAVE_EXECINFO_H -DHAVE_GETLINE
+else ifeq ($(PLATFORM),windows)
+    # MinGW: no regex.h / execinfo.h and no _POSIX_C_SOURCE. GKlib detects
+    # Windows via WIN32 (gk_arch.h) and falls back to its bundled gkregex.h and
+    # its own getline, so the HAVE_* features must NOT be asserted here.
+    GKMT_OS_DEF    := -DWIN32
+    GK_POSIX_DEF   :=
+    GK_FEATURE_DEF :=
+    MT_FEATURE_DEF :=
 else
-    GKMT_OS_DEF  := -DLINUX
-    GK_POSIX_DEF := -D_POSIX_C_SOURCE=200809L
+    GKMT_OS_DEF    := -DLINUX
+    GK_POSIX_DEF   := -D_POSIX_C_SOURCE=200809L
+    GK_FEATURE_DEF := -DHAVE_EXEC_INFO_H -DHAVE_GETLINE -DHAVE_REGEX_H
+    MT_FEATURE_DEF := -DHAVE_EXECINFO_H -DHAVE_GETLINE
 endif
 GK_INC := $(GKLIB_DIR)/include
 GK_CFLAGS := $(METIS_INLINE_OPT) -fPIC -fno-strict-aliasing -I$(GK_INC) \
-             -DHAVE_EXEC_INFO_H -DHAVE_GETLINE -DHAVE_REGEX_H $(GKMT_OS_DEF) -DNDEBUG2 \
+             $(GK_FEATURE_DEF) $(GKMT_OS_DEF) -DNDEBUG2 \
              $(GK_POSIX_DEF) -D__thread=__thread
 MT_CFLAGS := $(METIS_INLINE_OPT) -fPIC -fno-strict-aliasing -std=c99 \
              -I$(MT_ROOT) -I$(GK_INC) -I$(METIS_ABS_DIR)/include \
              $(METIS_DEF) $(GKMT_OS_DEF) -D_FILE_OFFSET_BITS=64 -DNDEBUG2 \
-             -DHAVE_EXECINFO_H -DHAVE_GETLINE
+             $(MT_FEATURE_DEF)
 # NOTE: the gk_/mt_ compile RULES live after the `all:` target (below) so they
 # do not become make's default goal — keep it that way.
 endif

@@ -79,7 +79,7 @@ void TopologyInit();
 void TopologyFinalize();
 int SetAffinity(int rank);
 int UnsetAffinity();
-int Yield();
+int YieldCPU();   /* was Yield(): <windows.h> #defines Yield as a macro */
 int GetNumThreads();
 int GetNumThreadsNuma();
 int GetAffinityThreads(int *coresbind, int callIndex);

@@ -356,14 +356,14 @@
             if (__wait_spin < STILES_WAIT_ADAPTIVE_BUDGET) { \
                 STILES_WAIT_CPU_PAUSE(); ++__wait_spin; \
             } else { \
-                sTiles::Control::Yield(); __wait_spin = 0; \
+                sTiles::Control::YieldCPU(); __wait_spin = 0; \
             } \
         } \
     }
 #else
 /* LEGACY (preserved verbatim from the original implementation) */
 #  define STILES_WAIT_LOOP(predicate) \
-        while (!stile->ss_abort && (predicate)) sTiles::Control::Yield();
+        while (!stile->ss_abort && (predicate)) sTiles::Control::YieldCPU();
 #endif
 
 #define ss_cond_wait(m, n, val) \
@@ -382,7 +382,7 @@
 //         reinterpret_cast<std::atomic<int>*>( \
 //             const_cast<int*>(&stile->ss_progress[(m)+stile->ss_ld*(n)]) \
 //         )->load(std::memory_order_acquire) != (val)) \
-//         sTiles::Control::Yield(); \
+//         sTiles::Control::YieldCPU(); \
 //     if (stile->ss_abort) \
 //         break;
 

@@ -701,7 +701,7 @@ void stiles_topology_init() { sTiles::Control::TopologyInit(); }
 void stiles_topology_finalize() { sTiles::Control::TopologyFinalize(); }
 int stiles_setaffinity(int rank) { return sTiles::Control::SetAffinity(rank); }
 int stiles_unsetaffinity() { return sTiles::Control::UnsetAffinity(); }
-int stiles_yield() { return sTiles::Control::Yield(); }
+int stiles_yield() { return sTiles::Control::YieldCPU(); }
 int stiles_get_numthreads() { return sTiles::Control::GetNumThreads(); }
 int stiles_get_numthreads_numa() { return sTiles::Control::GetNumThreadsNuma(); }
 int stiles_get_affthreads(int *coresbind, int call_index) { return sTiles::Control::GetAffinityThreads(coresbind, call_index); }

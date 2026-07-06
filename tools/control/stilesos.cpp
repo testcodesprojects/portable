@@ -251,7 +251,7 @@ int sTiles::Control::UnsetAffinity() {
    A thread can unlock the CPU if it has nothing to do to let
    another thread of less priority running for example for I/O.
  */
-int sTiles::Control::Yield() {
+int sTiles::Control::YieldCPU() {
 #if (defined STILES_OS_LINUX) || (defined STILES_OS_FREEBSD) || (defined STILES_OS_MACOS) || (defined STILES_OS_AIX)
     return sched_yield();
 #elif STILES_OS_WINDOWS

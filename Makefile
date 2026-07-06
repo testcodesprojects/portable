@@ -703,3 +703,45 @@ show-config:
 	@echo "SuiteSparse:   $(if $(filter 1,$(USE_SUITESPARSE)),enabled,disabled)"
 	@echo "STILES_MODE:   $(STILES_MODE)"
 	@echo "=============================================="
+
+###############################################################################
+# cross-syntax : Windows / MinGW portability PROBE  (diagnostic, non-gating)
+# ---------------------------------------------------------------------------
+# Compile-checks sTiles' OWN C++ sources — the REAL per-module SRC lists (with
+# each module's EXTRA_INC), NOT the vendored SCOTCH / METIS / GKlib /
+# SuiteSparse / libxsmm which carry their own upstream Windows story — with the
+# active compiler + real CXXFLAGS, WITHOUT linking. Run it from an MSYS2 UCRT64
+# shell, where CXX is the UCRT64 MinGW-w64 g++ (x86_64-w64-mingw32ucrt-*, the
+# standard Rtools44 toolchain), and it reports exactly which sTiles sources
+# still assume Linux/POSIX (ungated sched_setaffinity, numa, mmap, dlopen, ...)
+# and so need porting for Windows. It does NOT build a .dll and does NOT fix
+# anything; it just measures the gap. Errors land in cross-syntax.err; the
+# recipe prints a pass/fail tally and never fails the build (so CI can surface
+# the whole list rather than stop at the first error).
+#
+# Coverage = the module.mk-driven modules that hold sTiles' OS-sensitive code
+# (control/compute/memory/symbolic/sort/free/sparse/process + tile). GPU
+# (STILES_GPU-gated) and TileIndexer (separate lib driver) are out of scope.
+###############################################################################
+CROSS_MODULES := $(BUILD_MODULES) tools/tile
+
+.PHONY: cross-syntax
+cross-syntax:
+	@echo "=================================================================="
+	@echo "sTiles Windows / MinGW compile probe (syntax-only, no link)"
+	@echo "  platform : $(PLATFORM) ($(UNAME_M))"
+	@echo "  CXX      : $(CXX)"
+	@echo "  modules  : $(CROSS_MODULES)"
+	@echo "=================================================================="
+	@rm -f cross-syntax.err cross-syntax.log
+	@for d in $(CROSS_MODULES); do \
+	    echo "-- $$d"; \
+	    $(MAKE) --no-print-directory -C $$d syntax SYNTAX_ERR=$(CURDIR)/cross-syntax.err; \
+	done | tee cross-syntax.log
+	@total=$$(grep -cE '^  (ok|FAIL) ' cross-syntax.log 2>/dev/null); \
+	 fail=$$(grep -cE '^  FAIL ' cross-syntax.log 2>/dev/null); \
+	 : "$${total:=0}" "$${fail:=0}"; \
+	 echo "=================================================================="; \
+	 echo "  $$((total-fail))/$$total compiled clean;  $$fail failed"; \
+	 echo "  full compiler output: cross-syntax.err"; \
+	 echo "=================================================================="

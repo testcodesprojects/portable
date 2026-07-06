@@ -24,3 +24,7 @@ bench/speedtest
 # ── Editor / OS cruft ──────────────────────────────────────────────────────
 *~
 .DS_Store
+
+# Windows/MinGW compile-probe output (make cross-syntax)
+cross-syntax.err
+cross-syntax.log

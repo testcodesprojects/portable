@@ -125,6 +125,15 @@ ifeq ($(UNAME_S),Darwin)
     # No baked -install_name here: SHARED_LDFLAGS is reused by other shared
     # libs (e.g. libtileindexer); libstiles' install_name is set at its own link.
     SHARED_LDFLAGS := -dynamiclib
+else ifneq ($(filter MINGW% MSYS% CYGWIN% Windows_NT,$(UNAME_S)),)
+    # Windows via MinGW-w64 (an MSYS2 UCRT64 shell reports uname -s = MINGW64_*).
+    # Target toolchain: the UCRT64 MinGW-w64 (x86_64-w64-mingw32ucrt-*), i.e. the
+    # standard Rtools44 toolchain. Kept minimal: it exists so the compile PROBE
+    # (`make cross-syntax`) can retarget sTiles' own sources for Windows and
+    # report what still assumes Linux/POSIX. It is NOT a finished Windows port.
+    PLATFORM := windows
+    SHARED_EXT := dll
+    SHARED_LDFLAGS := -shared
 else
     PLATFORM := linux
     SHARED_EXT := so
@@ -366,9 +375,10 @@ ifeq ($(BLAS_DETECTED)$(USE_OPENBLAS),none0)
         $(info BLAS: Intel MKL detected at $(MKLROOT))
         # Static MKL archives for embedding into libstiles.so.
         # Embedding isolates sTiles' MKL (sequential) from any MKL the consumer
-        # process may load with a different threading layer (e.g. INLA's
-        # mkl_gnu_thread). Combined with the version script, MKL symbols stay
-        # local to libstiles.so and cannot clash at runtime.
+        # process may load with a different threading layer (e.g. a host program
+        # that loads MKL with the GNU threading layer, mkl_gnu_thread). Combined
+        # with the version script, MKL symbols stay local to libstiles.so and
+        # cannot clash at runtime.
         ifeq ($(PLATFORM),linux)
             ifneq ($(wildcard $(MKL_LIB_PATH)/libmkl_core.a),)
                 LAPACKE_STATIC_LIBS := -Wl,--start-group \
@@ -731,12 +741,13 @@ SCOTCH_INC        := -I$(SCOTCH_INLINE_DIR)
 SCOTCH_LIB        :=
 SCOTCH_STATIC_LIBS :=
 # SCOTCH's compressed-file support (and thus its -lz/-lbz2/-llzma deps) is only
-# compiled on Linux (see tools/process/Makefile). macOS builds SCOTCH without
-# it, so no compression libs are needed — and -llzma would fail to link there.
-ifeq ($(PLATFORM),macos)
-    SCOTCH_EXTRA_LIBS :=
-else
+# compiled on Linux (see tools/process/Makefile). macOS and Windows build SCOTCH
+# without it, so no compression libs are needed — and -llzma would fail to link
+# there.
+ifeq ($(PLATFORM),linux)
     SCOTCH_EXTRA_LIBS := -lz -lbz2 -llzma
+else
+    SCOTCH_EXTRA_LIBS :=
 endif
 
 # SuiteSparse - AMD/CAMD/COLAMD/CCOLAMD/BTF, compiled directly into libstiles.

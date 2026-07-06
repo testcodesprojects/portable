@@ -144,7 +144,7 @@ jobs:
           cd bench && ./run.sh
 
       # Nested parallelism: run several Cholesky factorizations CONCURRENTLY,
-      # each on its own cores (the INLA "groups" pattern). Checks every call
+      # each on its own cores (the nested-groups pattern). Checks every call
       # returns the same logdet and reports the serial-vs-concurrent speedup.
       # Kept modest (<= runner core count) so concurrency is real, not
       # oversubscribed: hosted runners have ~3-4 cores.
@@ -199,3 +199,56 @@ jobs:
           echo "::group::ASan — spacetime with SCOTCH context ON"
           STILES_SCOTCH_CTX=1 ./order_only mats/spacetime.mtx 1 40 || true
           echo "::endgroup::"
+
+  # Windows portability PROBE (diagnostic, non-gating). Compile-checks sTiles'
+  # OWN C++ sources with the MinGW-w64 UCRT64 toolchain (x86_64-w64-mingw32ucrt-*,
+  # the standard Rtools44 toolchain). It does NOT build a .dll and runs nothing:
+  # it reports which sTiles sources still assume Linux/POSIX (ungated
+  # sched_setaffinity / numa / mmap / dlopen ...) and so must be gated before a
+  # Windows build is possible. This is how we MEASURE the gap; it is not the
+  # port. continue-on-error so the full error list surfaces instead of blocking
+  # CI. BLAS here is MSYS2's OpenBLAS (headers only — the probe is syntax-only,
+  # no link); a real Windows build provides Windows MKL/OpenBLAS at its own
+  # final link.
+  windows-mingw-probe:
+    name: windows-mingw-probe-diagnostic
+    runs-on: windows-latest
+    continue-on-error: true
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up MSYS2 UCRT64 (MinGW-w64 — the UCRT64 / Rtools44 Windows toolchain)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            make
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-gcc-fortran
+            mingw-w64-ucrt-x86_64-openblas
+            mingw-w64-ucrt-x86_64-hwloc
+            mingw-w64-ucrt-x86_64-pkgconf
+      - name: Show toolchain + resolved build config
+        run: |
+          g++ --version | head -1
+          x86_64-w64-mingw32-g++ --version 2>/dev/null | head -1 || true
+          make show-config USE_LIBXSMM=0 || true
+      - name: Compile probe — sTiles-own sources under MinGW (syntax-only)
+        run: make cross-syntax USE_LIBXSMM=0
+      - name: Surface the Windows portability gap
+        if: always()
+        run: |
+          echo "::group::MinGW compiler errors (cross-syntax.err)"
+          if [ -s cross-syntax.err ]; then cat cross-syntax.err; \
+          else echo "(no errors — every sTiles-own source compiled under MinGW)"; fi
+          echo "::endgroup::"
+      - name: Upload probe log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-mingw-probe-log
+          path: cross-syntax.err
+          if-no-files-found: ignore

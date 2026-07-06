@@ -363,11 +363,25 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             echo "::group::winbuild.log tail"; tail -40 winbuild.log; echo "::endgroup::"
           fi
-      - name: Smoke test the Windows dll (if it built)
+      # Prove the DLL actually RUNS (not just links): compile speedtest against
+      # the import lib and factor a real matrix. libstiles.dll's own deps
+      # (openblas/gomp/hwloc/winpthread) live in the UCRT64 /ucrt64/bin already
+      # on PATH; we copy libstiles.dll next to the exe so Windows finds it.
+      - name: Smoke test the Windows dll (factor ferris)
         if: always()
         run: |
-          [ -f lib/libstiles.dll ] || { echo "no dll yet — skipping smoke"; exit 0; }
-          cd bench && make -s speedtest 2>/dev/null && ./speedtest mats/ferris.mtx 2 40 || echo "dll built but smoke not wired yet"
+          [ -f lib/libstiles.dll ] || { echo "no dll — skipping smoke"; exit 0; }
+          # Link the import lib explicitly (lib also has a static libstiles.a;
+          # we want to exercise the DLL, not static-link it).
+          g++ -std=c++20 -O2 -I tools/include -o bench/speedtest.exe bench/speedtest.cpp lib/libstiles.dll.a
+          cp lib/libstiles.dll bench/
+          cd bench
+          echo "### Windows smoke (speedtest ferris)" >> "$GITHUB_STEP_SUMMARY"
+          if ./speedtest.exe mats/ferris.mtx 2 40 | tee smoke.out; then
+            echo "✅ DLL runs — factored ferris on Windows" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ DLL built but smoke failed" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Upload Windows dll (if built)
         if: always()
         uses: actions/upload-artifact@v4

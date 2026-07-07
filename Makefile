@@ -197,7 +197,11 @@ endif
 # symbols) become local, preventing runtime clashes when sTiles is loaded
 # into a process that already has its own MKL.
 STILES_VERSION_SCRIPT := $(STILES_DIR)/stiles.map
-ifeq ($(PLATFORM),linux)
+# binutils honors --version-script for PE too: symbols under `local:` are not
+# exported. On Windows this is REQUIRED, not just hygiene — without it the DLL
+# auto-exports all the vendored guts, and a consumer .exe auto-imports a stray
+# DATA symbol from it, hitting MinGW's 32-bit pseudo-reloc overflow at load.
+ifneq ($(filter linux windows,$(PLATFORM)),)
     ifneq ($(wildcard $(STILES_VERSION_SCRIPT)),)
         SHARED_VERSION_FLAGS := -Wl,--version-script=$(STILES_VERSION_SCRIPT)
     endif
@@ -405,6 +409,7 @@ else ifeq ($(PLATFORM),windows)
 	@echo "Creating shared library libstiles.dll (Windows/MinGW)"
 	$(CXX) -shared -o lib/libstiles.dll \
 	    -Wl,--out-implib,lib/libstiles.dll.a \
+	    $(SHARED_VERSION_FLAGS) \
 	    -Wl,--whole-archive lib/libstiles.a -Wl,--no-whole-archive \
 	    tools/libs/libtileindexer.a $(METIS_LINK_FLAGS_LINUX) \
 	    $(SUITESPARSE_LINK_LIBS) $(SCOTCH_LINK_LIBS) $(LIBXSMM_LINK_LIBS) $(CXXFLAGS) $(LDFLAGS_SHARED)

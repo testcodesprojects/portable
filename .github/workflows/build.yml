@@ -304,6 +304,7 @@ jobs:
             mingw-w64-ucrt-x86_64-openblas
             mingw-w64-ucrt-x86_64-hwloc
             mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-python
       - name: Show toolchain + resolved build config
         run: |
           g++ --version | head -1
@@ -363,36 +364,24 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             echo "::group::winbuild.log tail"; tail -40 winbuild.log; echo "::endgroup::"
           fi
-      # Prove the DLL actually RUNS (not just links): compile speedtest against
-      # the import lib and factor a real matrix. libstiles.dll's own deps
-      # (openblas/gomp/hwloc/winpthread) live in the UCRT64 /ucrt64/bin already
-      # on PATH; we copy libstiles.dll next to the exe so Windows finds it.
-      - name: Smoke test the Windows dll (factor ferris)
+      # Prove the DLL actually RUNS: load it with ctypes (LoadLibrary — no
+      # compile-time import table, so MinGW auto-import / pseudo-relocs are
+      # physically impossible) and factor ferris. This is how pysTiles/R use it.
+      # We copy libstiles.dll AND its UCRT64 runtime deps next to smoke.py so
+      # os.add_dll_directory(cwd) resolves the whole dependency chain.
+      - name: Smoke test the Windows dll (ctypes, factor ferris)
         if: always()
         run: |
           [ -f lib/libstiles.dll ] || { echo "no dll — skipping smoke"; exit 0; }
-          # Link the import lib explicitly (lib also has a static libstiles.a;
-          # we want to exercise the DLL, not static-link it).
-          # -static*: statically link the GCC C++ runtime (libstdc++/libgcc/
-          # winpthread) INTO the exe so it doesn't auto-import DATA from those
-          # runtime DLLs across a >2 GB gap (that was the remaining MinGW 32-bit
-          # pseudo-reloc overflow, unrelated to libstiles — its exports are now
-          # just the API). The only DLL left is libstiles.dll (functions only).
-          # This is the standard way to link a MinGW C++ program that uses a DLL.
-          # The pseudo-reloc is MinGW auto-importing the sTiles_* FUNCTIONS
-          # (stiles.h has no __declspec(dllimport)); the v1 32-bit pseudo-relocs
-          # overflow across the ~32 GB ASLR gap. v2 pseudo-relocs are 64-bit
-          # capable, so force them; -static embeds the C++ runtime to cut the
-          # reloc count.
-          g++ -std=c++20 -O2 -I tools/include -o bench/speedtest.exe bench/speedtest.cpp lib/libstiles.dll.a \
-              -static -static-libgcc -static-libstdc++ -Wl,--enable-runtime-pseudo-reloc-v2
           cp lib/libstiles.dll bench/
+          # Copy every non-system dep of the DLL (the /ucrt64 ones) beside it.
+          ldd lib/libstiles.dll | awk '/ucrt64/ {print $3}' | xargs -r -I{} cp {} bench/ || true
           cd bench
-          echo "### Windows smoke (speedtest ferris)" >> "$GITHUB_STEP_SUMMARY"
-          if ./speedtest.exe mats/ferris.mtx 2 40 | tee smoke.out; then
-            echo "✅ DLL runs — factored ferris on Windows" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "### Windows smoke (ctypes, factor ferris)" >> "$GITHUB_STEP_SUMMARY"
+          if python smoke.py mats/ferris.mtx | tee smoke.out; then
+            echo "✅ DLL loads + factors ferris on Windows (ctypes)" | tee -a "$GITHUB_STEP_SUMMARY"
           else
-            echo "❌ DLL built but smoke failed" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "❌ ctypes smoke failed" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
       - name: Upload Windows dll (if built)
         if: always()

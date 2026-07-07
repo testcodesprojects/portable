@@ -379,8 +379,13 @@ jobs:
           # pseudo-reloc overflow, unrelated to libstiles — its exports are now
           # just the API). The only DLL left is libstiles.dll (functions only).
           # This is the standard way to link a MinGW C++ program that uses a DLL.
+          # --disable-auto-import: kill MinGW's data-pseudo-reloc mechanism
+          # outright. sTiles_* calls are FUNCTION imports (normal import table,
+          # unaffected); -static embeds the C++ runtime. If any genuine data
+          # import remains, the LINK fails and names the symbol (diagnostic)
+          # instead of a runtime pseudo-reloc overflow.
           g++ -std=c++20 -O2 -I tools/include -o bench/speedtest.exe bench/speedtest.cpp lib/libstiles.dll.a \
-              -static -static-libgcc -static-libstdc++
+              -static -static-libgcc -static-libstdc++ -Wl,--disable-auto-import
           cp lib/libstiles.dll bench/
           cd bench
           echo "### Windows smoke (speedtest ferris)" >> "$GITHUB_STEP_SUMMARY"

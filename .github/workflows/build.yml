@@ -193,7 +193,10 @@ jobs:
             #                              z/bz2/lzma file deps (libbz2 soname).
             #   STILES_STATIC_CXX=1 is the default (STANDALONE_SO): embeds
             #                              libstdc++/libgcc, so no GLIBCXX floor.
-            MAKEARGS="MARCH=avx2"
+            #   STILES_FMV=1               per-CPU AVX-512 clones of the hot
+            #                              sTiles-own solve/selinv kernels (AVX2
+            #                              default clone => can't hurt AVX2 CPUs).
+            MAKEARGS="MARCH=avx2 STILES_FMV=1"
           else
             # Linux arm64 (OpenBLAS) & macOS Apple Silicon (-mcpu=apple-m1).
             # USE_LIBXSMM=0: skip the fragile libxsmm clone/build on arm64.

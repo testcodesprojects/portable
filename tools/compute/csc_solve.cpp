@@ -19,6 +19,7 @@
 #include "../control/stiles_dispatch.h" // sTiles::parallel_call, unpack_args
 #include "../dot/sparse-dot.h"          // stiles_sparse_ddot (gather-dot)
 #include "../tile/meta.hpp"
+#include "../common/stiles_multiversion.hpp"   // STILES_MULTIVERSION (FMV: AVX-512 clone)
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
@@ -394,6 +395,7 @@ void pack_L_values(TiledMatrix* scheme) {
 //
 // Diagonal is the first entry in each column (L_rowind[L_colptr[j]] == j).
 // ---------------------------------------------------------------------------
+STILES_MULTIVERSION
 void csc_dtrsm(const TiledMatrix* scheme, double* x, int solve_type) {
     const int                       N   = scheme->dim;
     const int64_t*    __restrict__      Lcp = scheme->L_colptr;
@@ -474,6 +476,7 @@ void csc_dtrsm(const TiledMatrix* scheme, double* x, int solve_type) {
 //
 // solve_type:  0 = fwd,  1 = bwd,  2 = full LL^T
 // ---------------------------------------------------------------------------
+STILES_MULTIVERSION
 void csc_dtrsm_multi(const TiledMatrix* scheme, double* X, int nrhs, int ldb, int solve_type) {
     const int                       N   = scheme->dim;
     const int64_t*    __restrict__      Lcp = scheme->L_colptr;
@@ -578,6 +581,7 @@ void csc_dtrsm_multi(const TiledMatrix* scheme, double* X, int nrhs, int ldb, in
 // per row, which can be friendlier to the cache hierarchy than the
 // column-major layout where the K columns are scheme->dim apart.
 // ---------------------------------------------------------------------------
+STILES_MULTIVERSION
 void csc_dtrsm_multi_row(const TiledMatrix* scheme, double* X, int nrhs,
                          int ldb_row, int solve_type) {
     const int                       N   = scheme->dim;

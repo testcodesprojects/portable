@@ -957,9 +957,20 @@ BUILD_DATE_DEFS := -DSTILES_BUILD_YEAR=$(BUILD_YEAR) \
                    -DSTILES_VALID_YEARS=$(VALID_YEARS) \
                    -DSTILES_GIT_VERSION=\"$(GIT_VERSION)\"
 
+# Function multi-versioning (FMV): STILES_FMV=1 compiles the hot compute-bound
+# sTiles-own kernels (solve / selinv / numeric assembly) with an AVX-512 clone
+# plus the AVX2 baseline, selected per-CPU at load via an ifunc resolver (see
+# tools/common/stiles_multiversion.hpp). x86-64 + GCC only. Default OFF, so the
+# baseline is byte-identical; the portable artifact turns it on. Can't hurt: the
+# "default" clone is the same AVX2 codegen, the resolver fires once at load.
+STILES_FMV ?= 0
+ifeq ($(STILES_FMV),1)
+    FMV_DEF := -DSTILES_FMV
+endif
+
 COMMON_DEFS := -DADD_ $(LAPACKE_DEF) $(NUMA_DEF) \
                $(HWLOC_DEF) $(SUITESPARSE_DEF) $(LIBXSMM_DEF) $(CUDA_DEF) $(STILES_DEFS) \
-               $(BUILD_DATE_DEFS)
+               $(FMV_DEF) $(BUILD_DATE_DEFS)
 
 CFLAGS   := $(OPT_FLAGS) -fPIC $(OPENMP_FLAGS) $(COMMON_DEFS) $(INC)
 CXXFLAGS := $(OPT_FLAGS) -fPIC $(OPENMP_FLAGS) $(CXX_STD) $(COMMON_DEFS) $(INC)

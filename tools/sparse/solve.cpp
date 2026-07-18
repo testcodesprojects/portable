@@ -28,6 +28,7 @@
  */
 
 #include "solve.hpp"
+#include "../common/stiles_multiversion.hpp"   // STILES_MULTIVERSION (FMV: AVX-512 clone)
 
 #include "kernels.hpp"
 #include "../common/core_lapack.hpp"  // cblas_dtrsv/dgemv (+ Cblas* enums) for the nrhs==1 fast path
@@ -199,6 +200,7 @@ inline void gather_into(const double* y, std::size_t n,
 }
 
 // In-place forward substitution L y = y on a permuted vector.
+STILES_MULTIVERSION
 void forward_subst(const Symbolic& s, const CellStore& cs,
                    const ColIndex& ci, std::vector<double>& y, int nrhs,
                    std::vector<double>& scratch) {
@@ -286,6 +288,7 @@ void forward_subst(const Symbolic& s, const CellStore& cs,
 }
 
 // In-place backward substitution L^T y = y on a permuted vector.
+STILES_MULTIVERSION
 void backward_subst(const Symbolic& s, const CellStore& cs,
                     const ColIndex& ci, std::vector<double>& y, int nrhs,
                     std::vector<double>& scratch) {
@@ -396,6 +399,7 @@ inline void ensure_scratch_par(SolveScratch& ss, Int n, Int max_off_rows,
 // independent in their diagonal-block solve, but the off-diagonal scatter
 // writes to ancestor rows that can be shared across supernodes at the
 // same level → atomic update required.
+STILES_MULTIVERSION
 void forward_subst_par(const Symbolic& s, const CellStore& cs,
                        const ColIndex& ci, const EtreeSchedule& es,
                        std::vector<double>& y, int nrhs,
@@ -452,6 +456,7 @@ void forward_subst_par(const Symbolic& s, const CellStore& cs,
 // Parallel backward substitution. Each supernode writes only to its own
 // disjoint column range y[fc..fc+w-1], so supernodes within a level have
 // no write contention — no atomics needed. Process levels root → leaves.
+STILES_MULTIVERSION
 void backward_subst_par(const Symbolic& s, const CellStore& cs,
                         const ColIndex& ci, const EtreeSchedule& es,
                         std::vector<double>& y, int nrhs,
@@ -688,6 +693,7 @@ void refresh_packed_csc_values(PackedCsc& out) {
     out.values_built = true;
 }
 
+STILES_MULTIVERSION
 void solve_packed(const Symbolic& s, const PackedCsc& csc,
                   SolveScratch& ss, double* bx, int64_t ldb, int solve_type) {
     const Int n = s.n;
@@ -770,6 +776,7 @@ void solve_packed_par(const Symbolic& s, const PackedCsc& csc,
     permute_out(s, ss.y, 1, bx, ldb);
 }
 
+STILES_MULTIVERSION
 void solve_packed_multi(const Symbolic& s, const PackedCsc& csc,
                         SolveScratch& ss, double* bx, int nrhs, int64_t ldb, int solve_type) {
     const Int n = s.n;

@@ -28,6 +28,7 @@
  */
 
 #include "selinv.hpp"
+#include "../common/stiles_multiversion.hpp"   // STILES_MULTIVERSION (FMV: AVX-512 clone)
 
 #include "kernels.hpp"
 
@@ -83,6 +84,7 @@ Int find_pos(Idx target, const Idx* base, Int n) {
 
 }  // namespace
 
+STILES_MULTIVERSION
 void selinv(const Symbolic& s, const CellStore& L_cs, CellStore& Z_cs) {
     Z_cs.allocate_like(L_cs);
     ColIndex ci = build_col_index(s, Z_cs);

@@ -31,7 +31,7 @@
 //==============================================================================
 #define STILES_PARAM_CORRECTION_MODE       0
 #define STILES_PARAM_TILE_SIZE             1
-#define STILES_PARAM_ORDERING_MODE         2
+#define STILES_PARAM_ORDERING_MODE         2   /* bake-off candidate digit list */
 #define STILES_PARAM_TILE_TYPE             3
 #define STILES_PARAM_TILE_ORDERING_MODE    4
 #define STILES_PARAM_TILE_ORDERING_SIZE    5
@@ -42,10 +42,17 @@
 #define STILES_PARAM_GPU_COMPARE          10
 #define STILES_PARAM_GPU_ENABLE           11
 #define STILES_PARAM_MEMORY_ESTIMATE      12
-#define STILES_PARAM_TILE_ORD_MIN_DIM     13
+#define STILES_PARAM_TILE_ORD_MIN_DIM     13   /* DEPRECATED: stored, never read */
 #define STILES_PARAM_SERIAL_MODE          14
 #define STILES_PARAM_BW_MODE              15
-#define STILES_PARAM_COUNT                20
+/* 16..19, 23, 24 reserved */
+#define STILES_PARAM_FORCE_SCOTCH         20
+#define STILES_PARAM_SCOTCH_PADDING       21
+#define STILES_PARAM_PATH2_DEPTH          22
+#define STILES_PARAM_TREE_PATH_ENABLE     25
+#define STILES_PARAM_TREE_PATH_FORCE      26
+#define STILES_PARAM_COUNT                27   /* defined slots (0..26)          */
+#define STILES_PARAM_ARRAY_SIZE           50   /* full ABI array incl. reserved  */
 
 //==============================================================================
 // Named Parameter Values
@@ -60,11 +67,25 @@
 /* STILES_PARAM_TILE_SIZE */
 #define STILES_TILE_AUTO                  -1   /* Auto-detect tile size         */
 
+/* STILES_PARAM_ORDERING_MODE — digits for sTiles_set_ordering_mode.
+ * 0 = adaptive selection (default). Otherwise concatenate digits to name the
+ * exact bake-off candidate set (best fill wins), e.g. 167 = RCM+AMD+CAMD,
+ * a single digit forces that ordering alone.                                */
+#define STILES_ORD_RCM                     1   /* Reverse Cuthill-McKee        */
+#define STILES_ORD_METIS                   2   /* METIS nested dissection      */
+#define STILES_ORD_SCOTCH                  3   /* SCOTCH nested dissection     */
+#define STILES_ORD_ASCOTCH                 4   /* SCOTCH variant A             */
+#define STILES_ORD_FSCOTCH                 5   /* SCOTCH variant F             */
+#define STILES_ORD_AMD                     6   /* Approximate minimum degree   */
+#define STILES_ORD_CAMD                    7   /* Constrained AMD              */
+#define STILES_ORD_COLAMD                  8   /* Column AMD                   */
+
 /* STILES_PARAM_TILE_TYPE */
 #define STILES_TILE_DENSE                  0   /* Dense tiles                   */
 #define STILES_TILE_SEMISPARSE             1   /* Semisparse tiles              */
-#define STILES_TILE_SPARSE                 2   /* Sparse tiles                  */
-#define STILES_TILE_DENSE_SEMISPARSE       3   /* Dense + semisparse            */
+#define STILES_TILE_SPARSE                 2   /* Non-uniform (sparse) tiles    */
+#define STILES_TILE_AUTO_SELECT            3   /* Auto: resolve 0/1/2 after symbolic */
+#define STILES_TILE_DENSE_SEMISPARSE       3   /* DEPRECATED alias of AUTO_SELECT */
 
 /* STILES_PARAM_FORCE_ND */
 #define STILES_ND_AUTO                     0   /* Auto-detect ordering          */
@@ -82,6 +103,7 @@
 #define STILES_SEMI_ORIGINAL               0   /* Original implementation       */
 #define STILES_SEMI_IMPROVED               1   /* Improved implementation       */
 #define STILES_SEMI_VECTORIZED             2   /* Vectorized implementation     */
+#define STILES_SEMI_SERIAL_SPARSE          3   /* Vectorized + 1-core sparse-aware path */
 
 /* STILES_PARAM_GPU_COMPARE */
 #define STILES_GPU_ONLY                    0   /* GPU results only              */
@@ -136,41 +158,54 @@ void sTiles_set_control_param(int index, int value);
  * Retrieves the current value of an internal control parameter.
  * Use this to query configuration state set by other functions.
  *
- * @param index The parameter index (0-19):
+ * @param index The parameter index (0-26; use sTiles_get_param_description
+ *               for the per-value meaning of each slot):
  *   - 0: Semisparse pruning mode (set via sTiles_set_correction_mode)
- *   - 1: Tile size (set via sTiles_set_tile_size)
- *   - 2: Ordering strategy mode (set via sTiles_set_ordering_mode)
- *   - 3: Tile type mode (set via sTiles_set_tile_type_mode)
+ *   - 1: Tile size (set via sTiles_set_tile_size; -1 = auto, the default)
+ *   - 2: Ordering candidate list (set via sTiles_set_ordering_mode):
+ *        0 = adaptive (default); digits 1..8 = exact candidate set
+ *        (1=RCM 2=METIS 3=SCOTCH 4=ASCOTCH 5=FSCOTCH 6=AMD 7=CAMD 8=COLAMD)
+ *   - 3: Tile type mode (set via sTiles_set_tile_type_mode):
+ *        0=dense, 1=semisparse, 2=non-uniform, 3=auto
+ *        Default: 1 (semisparse) on all platforms
  *   - 4: Tile ordering mode (set via sTiles_set_tile_ordering_mode)
- *   - 5: Tile ordering size (set via sTiles_set_tile_ordering_size)
+ *   - 5: Tile ordering size (set via sTiles_set_tile_ordering_size;
+ *        -1 = auto: tile_size/2, the default)
  *   - 6: Force nested dissection mode (set via sTiles_force_ND)
  *   - 7: Inverse storage mode (set via sTiles_set_inverse_storage_mode)
  *   - 8: Parallelization mode (set via sTiles_set_use_omp): 0=pthreads, 1=OMP
- *        Default: pthreads on all platforms
- *   - 9: Semisparse implementation (set via sTiles_set_semisparse_impl): 0=original, 1=improved, 2=vectorized
- *        Default: 2 (vectorized)
- *   - 13: Tile ordering min dim threshold (set via sTiles_set_tile_ordering_min_dim)
- *         Skip tile-level ordering when tiles_dim < threshold (default: 100, 0=always run)
- *   - 12: Memory estimate mode (set via sTiles_set_memory_estimate): 0=skip (default), 1=compute & print
+ *        Default: pthreads on Linux, OMP on macOS
+ *   - 9: Semisparse implementation (set via sTiles_set_semisparse_impl):
+ *        0=original, 1=improved, 2=vectorized (default), 3=vectorized+sparse-aware
  *   - 10-11: GPU compare mode / GPU enable
+ *   - 12: Memory estimate mode (set via sTiles_set_memory_estimate): 0=skip (default), 1=compute & print
+ *   - 13: DEPRECATED (was tile-ordering min dim; stored, never read)
  *   - 14-15: Serial mode / Bandwidth mode
- *   - 16: Tile-first ordering mode (set via sTiles_set_tile_first_ordering_mode)
- *   - 20: Force ND ordering (set via sTiles_set_force_scotch_ordering)
- *   - 21: ND padding (set via sTiles_set_scotch_padding)
+ *   - 16-19: Reserved
+ *   - 20: Force SCOTCH ordering (set via sTiles_set_force_scotch_ordering)
+ *   - 21: SCOTCH padding (set via sTiles_set_scotch_padding)
  *   - 22: Path 2 ND scheduling depth (set via sTiles_set_path2_depth)
- *   - 23: Reserved (formerly iterative refinement steps; removed)
- *   - 24: Reserved
- * @return The parameter value, or -1 if index is out of range.
+ *   - 23-24: Reserved
+ *   - 25: Tree-reduction path enable (set via sTiles_set_tree_path_enable; default 1)
+ *   - 26: Tree-reduction path force (set via sTiles_set_tree_path_force)
+ * @return The parameter value, or -1 if index is out of range (a warning is
+ *         logged; note -1 is also a valid stored value for slots 1 and 5).
  */
 int  sTiles_get_control_param(int index);
 const char* sTiles_get_param_description(int index);
 void sTiles_reset_control_param(int index);
 void sTiles_reset_all_params(void);
 
+/** Bake-off candidate list: 0 = adaptive (default); digits 1..8 select the
+ *  exact set of orderings to evaluate (STILES_ORD_*: 1=RCM 2=METIS 3=SCOTCH
+ *  4=ASCOTCH 5=FSCOTCH 6=AMD 7=CAMD 8=COLAMD). A single digit pins one
+ *  ordering, e.g. sTiles_set_ordering_mode(STILES_ORD_AMD). */
 void sTiles_set_ordering_mode(int value);
 void sTiles_set_tile_ordering_mode(int value);
+/** DEPRECATED, no effect (slot 16 is never read). */
 void sTiles_set_tile_first_ordering_mode(int value);
 void sTiles_set_tile_ordering_size(int value);
+/** DEPRECATED, no effect (slot 13 is never read). */
 void sTiles_set_tile_ordering_min_dim(int value);
 void sTiles_set_correction_mode(int value);
 void sTiles_set_tile_type_mode(int value);
@@ -216,6 +251,10 @@ int  sTiles_get_tree_path_force(void);
 void sTiles_set_params(const int* params, int n);
 void sTiles_get_all_params(int* params, int* size);
 void sTiles_print_params(void);
+/** Print every STILES_* environment variable the library reads (current
+ *  value, default, one-line description). Env vars are runtime overrides and
+ *  debug hooks; prefer the sTiles_set_* API for stable configuration. */
+void sTiles_print_env(void);
 void sTiles_set_dense_export_file(const char* filepath);
 const char* sTiles_get_dense_export_file(void);
 void sTiles_set_rescale_cores(const int* rescale_list, int num_counts);
@@ -282,6 +321,17 @@ int sTiles_create(void**, int, const int*, const int*, const int*, const bool*);
 int sTiles_create_expert(void**, int, const int*, const int*, const int*, const bool*, const int*, const int*, const int*);
 int sTiles_init(void**);
 int sTiles_init_group(int, void**);
+/* Ordering + symbolic only: populate scheme->element_perm for every group with
+ * NO numeric factor arena (covers all numeric modes). Read the perm via
+ * sTiles_return_perm_vec; complete the factor later with sTiles_init (numeric),
+ * forcing that perm via sTiles_set_user_permutation. */
+int  sTiles_init_symbolic(void**);
+void sTiles_set_symbolic_only(int);
+int  sTiles_get_symbolic_only(void);
+/* Register a callback fired the instant group 0's ordering+symbolic is done
+ * (element_perm ready), BEFORE the numeric arena -- so a caller can ship the
+ * perm mid-init and overlap the rest. Pass NULL to clear. cb(group,call,perm,n). */
+void sTiles_set_symbolic_done_callback(void (*cb)(int, int, const int *, int));
 void sTiles_map_group_call_to_group_call(void**, int, int, int, int);
 
 /** Pack L into flat CSC layout for one call. Must be called *between*

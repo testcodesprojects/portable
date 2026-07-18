@@ -98,7 +98,7 @@ namespace sTiles { namespace preprocess{
         scheme->tileMetaCore   = TileMemoryManager::allocate<TileMetaCore>(scheme->numActiveTiles, group_index);
 
         if (!scheme->denseTiles || !scheme->tileMetaCore) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for denseTiles or tileMetaCore.\n");
+            sTiles::Logger::errorf("Memory allocation failed for denseTiles or tileMetaCore.");
             return StatusCode::OutOfResources;
         }
 
@@ -106,7 +106,7 @@ namespace sTiles { namespace preprocess{
             scheme->inverseTiles = TileMemoryManager::allocate<DenseTile>(scheme->numActiveTiles, group_index);
             scheme->savedTiles   = TileMemoryManager::allocate<DenseTile>(scheme->numActiveTiles, group_index);
             if (!scheme->inverseTiles || !scheme->savedTiles) {
-                std::fprintf(stderr, "ERROR: Memory allocation failed for inverseTiles/savedTiles.\n");
+                sTiles::Logger::errorf("Memory allocation failed for inverseTiles/savedTiles.");
                 return StatusCode::OutOfResources;
             }
         }
@@ -133,7 +133,7 @@ namespace sTiles { namespace preprocess{
         // Dense (factor) tile
         scheme->denseTiles[idx] = TileMemoryManager::allocate<double>(elems, group_index);
         if (!scheme->denseTiles[idx]) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for denseTiles[%d].\n", idx);
+            sTiles::Logger::errorf("Memory allocation failed for denseTiles[%d].", idx);
             return StatusCode::OutOfResources;
         }
 
@@ -141,7 +141,7 @@ namespace sTiles { namespace preprocess{
             // Inverse tile
             scheme->inverseTiles[idx] = TileMemoryManager::allocate<double>(elems, group_index);
             if (!scheme->inverseTiles[idx]) {
-                std::fprintf(stderr, "ERROR: Memory allocation failed for inverseTiles[%d].\n", idx);
+                sTiles::Logger::errorf("Memory allocation failed for inverseTiles[%d].", idx);
                 return StatusCode::OutOfResources;
             }
             // Zero initialize (column-major leading dimension = h)
@@ -150,7 +150,7 @@ namespace sTiles { namespace preprocess{
             // Saved tile
             scheme->savedTiles[idx] = TileMemoryManager::allocate<double>(elems, group_index);
             if (!scheme->savedTiles[idx]) {
-                std::fprintf(stderr, "ERROR: Memory allocation failed for savedTiles[%d].\n", idx);
+                sTiles::Logger::errorf("Memory allocation failed for savedTiles[%d].", idx);
                 return StatusCode::OutOfResources;
             }
         }
@@ -182,7 +182,7 @@ namespace sTiles { namespace preprocess{
 
             const int final_code = error_code.load(std::memory_order_relaxed);
             if (final_code != 0) {
-                std::fprintf(stderr, "ERROR: Parallel tile allocation failed with code %d. Exiting.\n", final_code);
+                sTiles::Logger::errorf("Parallel tile allocation failed with code %d. Exiting.", final_code);
                 std::exit(EXIT_FAILURE);
             }
             return StatusCode::Success;
@@ -194,7 +194,7 @@ namespace sTiles { namespace preprocess{
         for (int idx = 0; idx < scheme->numActiveTiles; ++idx) {
             const StatusCode sc = allocate_buffers_for_tile_org(scheme, idx, group_index);
             if (sc != StatusCode::Success) {
-                std::fprintf(stderr, "ERROR: Tile allocation failed at index %d. Exiting.\n", idx);
+                sTiles::Logger::errorf("Tile allocation failed at index %d. Exiting.", idx);
                 std::exit(EXIT_FAILURE);
             }
         }
@@ -320,12 +320,12 @@ namespace sTiles { namespace preprocess{
         // one chunk
         } else if ((*call_info)->factorization_variant == 1) {
             
-            std::cout << "TODO: add one-chunk variant helpers here as needed." << std::endl;
+            sTiles::Logger::debug("TODO: add one-chunk variant helpers here as needed.");
             exit(0);
         // dense_dense
         } else if ((*call_info)->factorization_variant == 2) {
 
-            std::cout << "TODO: add dense-dense variant helpers here as needed." << std::endl;
+            sTiles::Logger::debug("TODO: add dense-dense variant helpers here as needed.");
             exit(0);
         } else if ((*call_info)->factorization_variant == 3) {
 
@@ -338,7 +338,7 @@ namespace sTiles { namespace preprocess{
     #else
             (*scheme)->tileMetaCore = TileMemoryManager::allocate<TileMetaCore>((*scheme)->numActiveTiles, group_index);
             if (!(*scheme)->tileMetaCore) {
-                std::fprintf(stderr, "ERROR: Memory allocation failed for denseTiles or tileMetaCore.\n");
+                sTiles::Logger::errorf("Memory allocation failed for denseTiles or tileMetaCore.");
                 return StatusCode::OutOfResources;
             }
     #endif
@@ -387,7 +387,7 @@ namespace sTiles { namespace preprocess{
             clone->rhsTiles = nullptr;
 #endif
         } catch (const std::exception& ex) {
-            std::fprintf(stderr, "ERROR: Failed to allocate dense tile pointer arrays while cloning fast-mode scheme (%s).\n", ex.what());
+            sTiles::Logger::errorf("Failed to allocate dense tile pointer arrays while cloning fast-mode scheme (%s).", ex.what());
             return StatusCode::OutOfResources;
         }
 
@@ -461,7 +461,7 @@ namespace sTiles { namespace preprocess{
 //         // Dense (factor) tile
 //         scheme->denseTiles[idx] = TileMemoryManager::allocate<double>(elems, group_index);
 //         if (!scheme->denseTiles[idx]) {
-//             std::fprintf(stderr, "ERROR: Memory allocation failed for denseTiles[%d].\n", idx);
+//             sTiles::Logger::errorf("Memory allocation failed for denseTiles[%d].", idx);
 //             return StatusCode::OutOfResources;
 //         }
 
@@ -469,7 +469,7 @@ namespace sTiles { namespace preprocess{
 //             // Inverse tile
 //             scheme->inverseTiles[idx] = TileMemoryManager::allocate<double>(elems, group_index);
 //             if (!scheme->inverseTiles[idx]) {
-//                 std::fprintf(stderr, "ERROR: Memory allocation failed for inverseTiles[%d].\n", idx);
+//                 sTiles::Logger::errorf("Memory allocation failed for inverseTiles[%d].", idx);
 //                 return StatusCode::OutOfResources;
 //             }
 //             // Zero initialize (column-major leading dimension = h)
@@ -478,7 +478,7 @@ namespace sTiles { namespace preprocess{
 //             // Saved tile
 //             scheme->savedTiles[idx] = TileMemoryManager::allocate<double>(elems, group_index);
 //             if (!scheme->savedTiles[idx]) {
-//                 std::fprintf(stderr, "ERROR: Memory allocation failed for savedTiles[%d].\n", idx);
+//                 sTiles::Logger::errorf("Memory allocation failed for savedTiles[%d].", idx);
 //                 return StatusCode::OutOfResources;
 //             }
 //         }
@@ -582,7 +582,7 @@ namespace sTiles { namespace preprocess{
 //         }
 //         clone->rhsTiles = nullptr;
 //     } catch (const std::exception& ex) {
-//         std::fprintf(stderr, "ERROR: Failed to allocate dense tile pointer arrays while cloning fast-mode scheme (%s).\n", ex.what());
+//         sTiles::Logger::errorf("Failed to allocate dense tile pointer arrays while cloning fast-mode scheme (%s).", ex.what());
 //         return StatusCode::OutOfResources;
 //     }
 
@@ -700,7 +700,7 @@ namespace sTiles { namespace preprocess{
 // #else
 //         (*scheme)->tileMetaCore = TileMemoryManager::allocate<TileMetaCore>((*scheme)->numActiveTiles, group_index);
 //         if (!(*scheme)->tileMetaCore) {
-//             std::fprintf(stderr, "ERROR: Memory allocation failed for denseTiles or tileMetaCore.\n");
+//             sTiles::Logger::errorf("Memory allocation failed for denseTiles or tileMetaCore.");
 //             return StatusCode::OutOfResources;
 //         }
 // #endif
@@ -785,7 +785,7 @@ namespace sTiles { namespace preprocess{
 // #else
 //         (*scheme)->tileMetaCore = TileMemoryManager::allocate<TileMetaCore>((*scheme)->numActiveTiles, group_index);
 //         if (!(*scheme)->tileMetaCore) {
-//             std::fprintf(stderr, "ERROR: Memory allocation failed for denseTiles or tileMetaCore.\n");
+//             sTiles::Logger::errorf("Memory allocation failed for denseTiles or tileMetaCore.");
 //             return StatusCode::OutOfResources;
 //         }
 // #endif

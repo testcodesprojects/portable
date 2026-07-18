@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "stiles_structs.hpp"
+#include "stiles_logger.hpp"
 #include "../tile/meta.hpp"
 
 #ifdef _OPENMP
@@ -200,14 +201,14 @@ inline void export_dense_tiled_matrix(const TiledMatrix* scheme,
             std::filesystem::create_directories(path_obj.parent_path());
         }
     } catch (const std::filesystem::filesystem_error& e) {
-        std::cerr << "ERROR: Could not create directory for " << filepath
-                  << ": " << e.what() << std::endl;
+        sTiles::Logger::error("Could not create directory for ", filepath,
+                  ": ", e.what());
         return;
     }
 
     std::ofstream outfile(filepath);
     if (!outfile.is_open()) {
-        std::cerr << "ERROR: Could not open " << filepath << " for writing." << std::endl;
+        sTiles::Logger::error("Could not open ", filepath, " for writing.");
         return;
     }
 
@@ -444,7 +445,7 @@ inline void export_dense_tiled_matrix(const TiledMatrix* scheme,
     }
 
     outfile.close();
-    std::cout << "[sTiles] Exported matrix to " << filepath << std::endl;
+    sTiles::Logger::info("Exported matrix to ", filepath);
 }
 
 } // namespace sTiles

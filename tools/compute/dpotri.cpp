@@ -289,7 +289,7 @@ namespace sTiles {
             //   0 = dense: all inverse tiles are full h×w
             //   1 = semisparse: diagonal tiles are DENSE, off-diagonal use active-cols format
             int* params = sTiles_get_params();
-            const int inverse_storage_mode = params ? params[7] : 0;
+            const int inverse_storage_mode = params ? params[sTiles::param::InverseStorageMode] : 0;
             const bool semisparse_offdiag = (inverse_storage_mode == 1);
 
             int diag_count = 0;
@@ -582,6 +582,13 @@ extern "C" {
         int global_index = s->schemes[0]->call_lookup_table[group_index][call_index];
         int global_index_mapped = global_index;
 
+        // Refuse a scheme whose preprocessing failed (see sTiles_chol guard).
+        if (global_index < 0 || !s->schemes[global_index] || s->schemes[global_index]->preprocess_failed) {
+            sTiles::Logger::error("sTiles_selinv: group ", group_index, " call ", call_index,
+                " was not successfully preprocessed; skipping selected inversion.");
+            return -1;
+        }
+
         sTiles_call *call = &s->stiles_groups[group_index].stiles_calls[call_index];
 
         if (call->mapped_group_index > -1) {
@@ -601,10 +608,12 @@ extern "C" {
             TiledMatrix* sp_scheme = s->schemes[global_index_mapped];
             if (sp_scheme && sp_scheme->sparse_handle) {
                 sTiles::StatusCode sp_status =
-                    (stiles_control_params[8] == -1)
+                    (stiles_control_params[sTiles::param::UseOMP] == -1)
                         ? sTiles::pthreads_sparse_dpotri(global_index_mapped, sp_scheme)
                         : sTiles::omp_sparse_dpotri(global_index_mapped, sp_scheme);
                 s->schemes[global_index_mapped]->timings[1] = omp_get_wtime() - etime;
+                sTiles::Logger::timingf("\u2502   \u21aa Selinv (group %d, call %d): %.6f s",
+                    group_index, call_index, s->schemes[global_index_mapped]->timings[1]);
                 return (sp_status == sTiles::StatusCode::Success) ? 0 : -1;
             }
         }
@@ -614,8 +623,8 @@ extern "C" {
         #ifdef STILES_GPU
         {
             TiledMatrix* scheme = s->schemes[global_index_mapped];
-            const int tile_type_mode = stiles_control_params[3];  // 0=dense, 1=semisparse
-            const int gpu_comparison_mode = stiles_control_params[10]; // 0=GPU-only, 1=GPU with CPU validation
+            const int tile_type_mode = stiles_scheme_tile_mode(scheme);  // 0=dense, 1=semisparse
+            const int gpu_comparison_mode = stiles_control_params[sTiles::param::GpuCompareMode]; // 0=GPU-only, 1=GPU with CPU validation
 
             bool gpu_selinv_ready = scheme->use_gpu &&
                                     scheme->factorization_variant == 0 &&
@@ -642,7 +651,7 @@ extern "C" {
                     double cpu_start = omp_get_wtime();
                     sTiles::copy_L_for_selinv(&s->schemes[global_index_mapped]);
                     sTiles::reinit_inverse_identity(&s->schemes[global_index_mapped]);
-                    if (stiles_control_params[8] == 1) {
+                    if (stiles_control_params[sTiles::param::UseOMP] == 1) {
                         sTiles::omp_dpotri(global_index, scheme);
                     } else {
                         sTiles::pthreads_dpotri(global_index, scheme);
@@ -774,6 +783,8 @@ extern "C" {
                 }
 
                 s->schemes[global_index_mapped]->timings[1] = omp_get_wtime() - etime;
+                sTiles::Logger::timingf("\u2502   \u21aa Selinv (group %d, call %d): %.6f s",
+                    group_index, call_index, s->schemes[global_index_mapped]->timings[1]);
                 return static_cast<int>(sTiles::StatusCode::Success);
             }
         }
@@ -783,7 +794,7 @@ extern "C" {
         sTiles::copy_L_for_selinv(&s->schemes[global_index_mapped]);
         sTiles::reinit_inverse_identity(&s->schemes[global_index_mapped]);
 
-        if (stiles_control_params[8] == 1) {
+        if (stiles_control_params[sTiles::param::UseOMP] == 1) {
             status = sTiles::omp_dpotri(global_index, s->schemes[global_index_mapped]);
         } else {
             status = sTiles::pthreads_dpotri(global_index, s->schemes[global_index_mapped]);
@@ -799,6 +810,8 @@ extern "C" {
 
         sTiles::copy_saved_L_back_to_L(&s->schemes[global_index_mapped]);
         s->schemes[global_index_mapped]->timings[1] = omp_get_wtime() - etime;
+        sTiles::Logger::timingf("\u2502   \u21aa Selinv (group %d, call %d): %.6f s",
+            group_index, call_index, s->schemes[global_index_mapped]->timings[1]);
 
         return static_cast<int>(status);
     }

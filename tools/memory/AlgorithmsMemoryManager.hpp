@@ -32,6 +32,7 @@
 #include <map>
 #include <iomanip>
 #include "../common/stiles_mem_alloc.hpp"
+#include "../common/stiles_logger.hpp"
 
 
 // A structure to store an allocation record along with an optional group index.
@@ -70,8 +71,7 @@ public:
     
     // Report memory allocation error and throw an exception.
     static void reportError(const std::string& message, const char* file = __FILE__, int line = __LINE__) {
-        std::cerr << "MemoryManager Error: " << message 
-                  << " (File: " << file << ", Line: " << line << ")" << std::endl;
+        sTiles::Logger::error("MemoryManager: ", message, " (File: ", file, ", Line: ", line, ")");
         throw std::runtime_error(message);
     }
     

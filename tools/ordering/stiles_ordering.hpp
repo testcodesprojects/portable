@@ -36,6 +36,12 @@ extern "C" int stiles_runMETIS_direct(int** csr_i, int** csr_j, int N, int nnz, 
 
 namespace sTiles {
 
+// Upper bound on nnz(L) accepted by the symbolic factorization. With 64-bit
+// offsets this is a MEMORY-safety cap (not an int32 ceiling): 2e10 nonzeros is
+// ~160 GB for L_rowind+L_values, at the top of a large-memory node. Matrices
+// whose fill exceeds this abort cleanly via the preprocess_failed path.
+static constexpr size_t kMaxFactorNnz = 20'000'000'000ULL;
+
 // Forward declarations for user permutation accessors (defined in process.cpp)
 const int* get_user_permutation(int group_index);
 int get_user_permutation_size(int group_index);
@@ -51,7 +57,7 @@ bool get_forced_partition_sizes(int group_index, int& p1, int& p2, int& sep);
 // the selector in process.cpp (~L202 / L1438) — KEEP IN SYNC. Named distinctly
 // and file-local to avoid an ODR clash with process.cpp's copy in the same TU.
 static inline double pad_gate_block_density(const TiledMatrix* scheme, int ts) {
-    const int* colptr = scheme->L_colptr;
+    const int64_t* colptr = scheme->L_colptr;
     const int* rowind = scheme->L_rowind;
     const int n = scheme->dim;
     if (!colptr || !rowind || n <= 0 || ts <= 0) return 0.0;
@@ -156,7 +162,7 @@ struct StrategyResult {
 inline std::vector<int> unique_digits_1_to_9(long long n) {
     n = std::llabs(n);
     if (n == 0) {
-        std::cerr << "Error: digits must be 1..9 only\n";
+        sTiles::Logger::error("digits must be 1..9 only");
         std::exit(EXIT_FAILURE);
     }
 
@@ -164,7 +170,7 @@ inline std::vector<int> unique_digits_1_to_9(long long n) {
     while (n > 0) {
         const int d = static_cast<int>(n % 10);
         if (d < 1 || d > 9) {
-            std::cerr << "Error: digit " << d << " is not allowed (only 1..9)\n";
+            sTiles::Logger::error("digit ", d, " is not allowed (only 1..9)");
             std::exit(EXIT_FAILURE);
         }
         seen[d] = true;
@@ -264,7 +270,7 @@ inline StatusCode run_permutation(int** my_perm, int** my_iperm, int* N, int* nn
         sTiles::runND(indices_i, indices_j, *N, *nnz, fixed_col, my_iperm, my_perm, num_sep, sizes);
         const double t_ref = omp_get_wtime() - t_ref_start;
         sTiles::Logger::debug("│   ↪ sTiles_ordering_2 completed in " + sTiles::format_seconds(t_ref) + " s");
-        //fprintf(stderr, "[debug] g_nd_hub_skipped=%d\n", (int)::g_nd_hub_skipped);
+        //sTiles::Logger::errorf("[debug] g_nd_hub_skipped=%d", (int)::g_nd_hub_skipped);
         if (::g_nd_hub_skipped) return StatusCode::NotSupported;
     } else if (ordering == 3) {
         sTiles::runRCM_scipy(indices_i, indices_j, *N, *nnz, fixed_col, my_iperm, my_perm, true);
@@ -777,17 +783,16 @@ static StatusCode apply_scotch_block_padding(
                 const int p2e = P1_new + P2_new;    // P2 = [p1e, p2e), Sep = [p2e, nd)
                 long long p2p1 = 0, sepp1 = 0, sepp2 = 0;
                 for (int c = 0; c < p1e; ++c)
-                    for (int p = scheme.L_colptr[c]; p < scheme.L_colptr[c + 1]; ++p) {
+                    for (int64_t p = scheme.L_colptr[c]; p < scheme.L_colptr[c + 1]; ++p) {
                         const int r = scheme.L_rowind[p];
                         if      (r >= p1e && r < p2e) ++p2p1;
                         else if (r >= p2e)            ++sepp1;
                     }
                 for (int c = p1e; c < p2e; ++c)
-                    for (int p = scheme.L_colptr[c]; p < scheme.L_colptr[c + 1]; ++p)
+                    for (int64_t p = scheme.L_colptr[c]; p < scheme.L_colptr[c + 1]; ++p)
                         if (scheme.L_rowind[p] >= p2e) ++sepp2;
-                std::fprintf(stderr,
-                    "[PAD_INDEP/3way] ts=%d nd=%d P1=[0,%d) P2=[%d,%d) Sep=[%d,%d): "
-                    "P2<-P1=%lld %s | Sep<-P1=%lld Sep<-P2=%lld => %s\n",
+                sTiles::Logger::errorf("[PAD_INDEP/3way] ts=%d nd=%d P1=[0,%d) P2=[%d,%d) Sep=[%d,%d): "
+                    "P2<-P1=%lld %s | Sep<-P1=%lld Sep<-P2=%lld => %s",
                     ts, nd, p1e, p1e, p2e, p2e, nd, p2p1,
                     p2p1 == 0 ? "" : "**LEAF-LEAF: NOT INDEPENDENT**", sepp1, sepp2,
                     p2p1 == 0 ? "INDEPENDENT" : "NOT INDEPENDENT");
@@ -887,9 +892,10 @@ static StatusCode apply_scotch_block_padding(
     }
     for (int j = 0; j < new_dim; ++j)
         std::sort(rowind.begin() + colptr[j], rowind.begin() + colptr[j + 1]);
-    std::vector<int> cp, ri;
-    const int new_nnzL = sTiles::symbolic_chol_fillin(
-        new_dim, colptr, rowind, cp, ri, 2'000'000'000UL);
+    std::vector<int64_t> cp;
+    std::vector<int> ri;
+    const int64_t new_nnzL = sTiles::symbolic_chol_fillin(
+        new_dim, colptr, rowind, cp, ri, kMaxFactorNnz);
     if (new_nnzL < 0) {
         std::free(new_rows); std::free(new_cols);
         OrderingMemoryManager::deallocate(new_perm);
@@ -901,7 +907,7 @@ static StatusCode apply_scotch_block_padding(
     // Count active tiles on L.
     std::vector<int> L_row(new_nnzL), L_col(new_nnzL);
     for (int j = 0; j < new_dim; ++j)
-        for (int p = cp[j]; p < cp[j + 1]; ++p) {
+        for (int64_t p = cp[j]; p < cp[j + 1]; ++p) {
             L_row[p] = ri[p];
             L_col[p] = j;
         }
@@ -929,7 +935,7 @@ static StatusCode apply_scotch_block_padding(
 
     scheme.element_perm  = new_perm;
     scheme.element_iperm = new_iperm;
-    scheme.L_colptr = OrderingMemoryManager::allocate<int>(new_dim + 1, group_index);
+    scheme.L_colptr = OrderingMemoryManager::allocate<int64_t>(new_dim + 1, group_index);
     scheme.L_rowind = OrderingMemoryManager::allocate<int>(new_nnzL, group_index);
     if (scheme.L_colptr && scheme.L_rowind) {
         std::copy(cp.begin(), cp.end(), scheme.L_colptr);
@@ -1160,18 +1166,16 @@ static StatusCode apply_scotch_block_padding_nway(
         // sizes. A correct split has start_new%%ts == 0 and padded_sz%%ts == 0
         // for EVERY region (⇒ contiguous, gap-free tile partition of [0,grid)).
         if (std::getenv("STILES_PAD_DUMP")) {
-            std::fprintf(stderr,
-                "[PAD_DUMP] ts=%d old_dim=%d new_dim=%d total_pad=%d grid=%d "
-                "root_sep_tiles=%d layout_ok=%d collect=%d N=%d\n",
+            sTiles::Logger::errorf("[PAD_DUMP] ts=%d old_dim=%d new_dim=%d total_pad=%d grid=%d "
+                "root_sep_tiles=%d layout_ok=%d collect=%d N=%d",
                 ts, old_dim, new_dim, total_pad, grid_tiles, root_sep_tiles,
                 (int)layout_ok, (int)scheme.scotch_partition_collection, N);
             for (int r = 0; r < N; ++r) {
                 const int start_new = regions[r].start_col + cum_pad_before[r];
                 const int raw_sz    = regions[r].end_col - regions[r].start_col;
                 const int padded_sz = raw_sz + region_pad[r];
-                std::fprintf(stderr,
-                    "[PAD_DUMP]   %-2d %s tiles[%d,%d) span=%d  raw=%d pad=%d "
-                    "cores[%d,%d)  start%%ts=%d size%%ts=%d %s\n",
+                sTiles::Logger::errorf("[PAD_DUMP]   %-2d %s tiles[%d,%d) span=%d  raw=%d pad=%d "
+                    "cores[%d,%d)  start%%ts=%d size%%ts=%d %s",
                     r, regions[r].is_leaf ? "L" : "S",
                     scheme.partitions[r].start_tile, scheme.partitions[r].end_tile,
                     scheme.partitions[r].end_tile - scheme.partitions[r].start_tile,
@@ -1197,33 +1201,32 @@ static StatusCode apply_scotch_block_padding_nway(
                     e1 = std::min(scheme.partitions[p].end_tile * ts, new_dim);
                 };
                 int leaf_leaf_violations = 0;
-                std::fprintf(stderr, "[PAD_INDEP] cross-partition L coupling (later<-earlier, nnz):\n");
+                sTiles::Logger::errorf("[PAD_INDEP] cross-partition L coupling (later<-earlier, nnz):");
                 for (int j = 0; j < N; ++j) {
                     int rj0, rj1; erange(j, rj0, rj1);
                     for (int i = 0; i < j; ++i) {
                         int ci0, ci1; erange(i, ci0, ci1);
                         long long cnt = 0;
                         for (int c = ci0; c < ci1; ++c)
-                            for (int p = scheme.L_colptr[c]; p < scheme.L_colptr[c + 1]; ++p) {
+                            for (int64_t p = scheme.L_colptr[c]; p < scheme.L_colptr[c + 1]; ++p) {
                                 const int r = scheme.L_rowind[p];
                                 if (r >= rj0 && r < rj1) ++cnt;
                             }
                         if (cnt > 0) {
                             const bool leaf_leaf = regions[i].is_leaf && regions[j].is_leaf;
                             if (leaf_leaf) ++leaf_leaf_violations;
-                            std::fprintf(stderr,
-                                "[PAD_INDEP]   p%d(%s) <- p%d(%s): %lld %s\n",
+                            sTiles::Logger::errorf("[PAD_INDEP]   p%d(%s) <- p%d(%s): %lld %s",
                                 j, regions[j].is_leaf ? "L" : "S",
                                 i, regions[i].is_leaf ? "L" : "S", cnt,
                                 leaf_leaf ? "**LEAF-LEAF: NOT INDEPENDENT**" : "(leaf->sep, ok)");
                         }
                     }
                 }
-                std::fprintf(stderr, "[PAD_INDEP] leaf-leaf coupling violations: %d  => partitions %s\n",
+                sTiles::Logger::errorf("[PAD_INDEP] leaf-leaf coupling violations: %d  => partitions %s",
                     leaf_leaf_violations,
                     leaf_leaf_violations == 0 ? "INDEPENDENT" : "NOT INDEPENDENT");
             } else {
-                std::fprintf(stderr, "[PAD_INDEP] L structure unavailable; independence scan skipped\n");
+                sTiles::Logger::errorf("[PAD_INDEP] L structure unavailable; independence scan skipped");
             }
         }
 
@@ -1357,9 +1360,10 @@ static StatusCode apply_scotch_block_padding_nway(
     }
     for (int j = 0; j < new_dim; ++j)
         std::sort(rowind.begin() + colptr[j], rowind.begin() + colptr[j + 1]);
-    std::vector<int> cp, ri;
-    const int new_nnzL = sTiles::symbolic_chol_fillin(
-        new_dim, colptr, rowind, cp, ri, 2'000'000'000UL);
+    std::vector<int64_t> cp;
+    std::vector<int> ri;
+    const int64_t new_nnzL = sTiles::symbolic_chol_fillin(
+        new_dim, colptr, rowind, cp, ri, kMaxFactorNnz);
     if (new_nnzL < 0) {
         std::free(new_rows); std::free(new_cols);
         OrderingMemoryManager::deallocate(new_perm);
@@ -1371,7 +1375,7 @@ static StatusCode apply_scotch_block_padding_nway(
     // 12. Count active tiles.
     std::vector<int> L_row(new_nnzL), L_col(new_nnzL);
     for (int j = 0; j < new_dim; ++j)
-        for (int p = cp[j]; p < cp[j + 1]; ++p) {
+        for (int64_t p = cp[j]; p < cp[j + 1]; ++p) {
             L_row[p] = ri[p];
             L_col[p] = j;
         }
@@ -1399,7 +1403,7 @@ static StatusCode apply_scotch_block_padding_nway(
 
     scheme.element_perm  = new_perm;
     scheme.element_iperm = new_iperm;
-    scheme.L_colptr = OrderingMemoryManager::allocate<int>(new_dim + 1, group_index);
+    scheme.L_colptr = OrderingMemoryManager::allocate<int64_t>(new_dim + 1, group_index);
     scheme.L_rowind = OrderingMemoryManager::allocate<int>(new_nnzL, group_index);
     if (scheme.L_colptr && scheme.L_rowind) {
         std::copy(cp.begin(), cp.end(), scheme.L_colptr);
@@ -1453,9 +1457,9 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
     //               → sTiles_set_path2_depth()
     // These replace the old STILES_FORCE_ORDERING / STILES_ENABLE_SCOTCH_PADDING
     // env vars — no set/unset dance needed across runs, just call the setter.
-    const bool FORCE_SCOTCH          = (stiles_control_params[20] != 0);
-    const bool ENABLE_SCOTCH_PADDING = (stiles_control_params[21] != 0);
-    const int  PATH2_DEPTH           = stiles_control_params[22];
+    const bool FORCE_SCOTCH          = (stiles_control_params[sTiles::param::ForceScotchOrdering] != 0);
+    const bool ENABLE_SCOTCH_PADDING = (stiles_control_params[sTiles::param::ScotchPadding] != 0);
+    const int  PATH2_DEPTH           = stiles_control_params[sTiles::param::Path2Depth];
 
     const double t_symbolic_start = omp_get_wtime();
     if (!call_info || !*call_info || !Tmatrix || !*Tmatrix) {
@@ -1540,12 +1544,13 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
             }
             for (int j = 0; j < n_u; ++j)
                 std::sort(rowind_u.begin() + colptr_u[j], rowind_u.begin() + colptr_u[j + 1]);
-            std::vector<int> cp_u, ri_u;
-            const int nnzL_u = sTiles::symbolic_chol_fillin(n_u, colptr_u, rowind_u, cp_u, ri_u, 2'000'000'000UL);
+            std::vector<int64_t> cp_u;
+            std::vector<int> ri_u;
+            const int64_t nnzL_u = sTiles::symbolic_chol_fillin(n_u, colptr_u, rowind_u, cp_u, ri_u, kMaxFactorNnz);
             if (nnzL_u >= 0) {
                 std::vector<int> L_row(nnzL_u), L_col(nnzL_u);
                 for (int j = 0; j < n_u; ++j)
-                    for (int p = cp_u[j]; p < cp_u[j + 1]; ++p) {
+                    for (int64_t p = cp_u[j]; p < cp_u[j + 1]; ++p) {
                         L_row[p] = ri_u[p];
                         L_col[p] = j;
                     }
@@ -1557,7 +1562,7 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
                         scheme.dimTiledMatrix, total);
                     user_active = total;
                     scheme.nnz_factor = static_cast<long long>(nnzL_u);
-                    scheme.L_colptr = OrderingMemoryManager::allocate<int>(n_u + 1, group_index);
+                    scheme.L_colptr = OrderingMemoryManager::allocate<int64_t>(n_u + 1, group_index);
                     scheme.L_rowind = OrderingMemoryManager::allocate<int>(nnzL_u, group_index);
                     std::copy(cp_u.begin(), cp_u.end(), scheme.L_colptr);
                     std::copy(ri_u.begin(), ri_u.end(), scheme.L_rowind);
@@ -1729,11 +1734,41 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
                 + std::to_string(force_id_override));
         }
 
+        // User-selected candidate set: param[2] (sTiles_set_ordering_mode) is a
+        // digit list in the PUBLIC ordering numbering (see STILES_ORD_* in
+        // stiles.h): 1=RCM, 2=METIS, 3=SCOTCH, 4=ASCOTCH, 5=FSCOTCH, 6=AMD,
+        // 7=CAMD, 8=COLAMD. E.g. 167 = evaluate RCM, AMD, CAMD; a single digit
+        // pins one ordering. 0 (default) = adaptive size-bucket selection.
+        // The digits map to the INTERNAL ids used below; user selection also
+        // bypasses the sparse-class prune and the STILES_DISABLE_SCOTCH hatch
+        // (an explicit choice is respected verbatim).
+        std::vector<int> user_orderings;
+        if (force_id_override == 0 &&
+            stiles_control_params[sTiles::param::OrderingMode] > 0) {
+            static const int kPublicToInternal[9] = {
+                /*0*/ 0, /*1 RCM*/ 1, /*2 METIS*/ 21, /*3 SCOTCH*/ 4,
+                /*4 ASCOTCH*/ 41, /*5 FSCOTCH*/ 42, /*6 AMD*/ 5,
+                /*7 CAMD*/ 6, /*8 COLAMD*/ 7 };
+            bool seen[9] = {};
+            std::vector<int> rev;
+            int digits = stiles_control_params[sTiles::param::OrderingMode];
+            while (digits > 0) {
+                const int d = digits % 10; digits /= 10;
+                if (d >= 1 && d <= 8 && !seen[d]) { seen[d] = true; rev.push_back(kPublicToInternal[d]); }
+            }
+            user_orderings.assign(rev.rbegin(), rev.rend());
+        }
+
         // Select orderings based on matrix size.
         // IDs: 1=RCM, 4=SCOTCH, 41=ASCOTCH, 42=FSCOTCH, 21=METIS, 5=AMD, 6=CAMD, 7=COLAMD
         std::vector<int> orderings_vec;
         if (force_id_override > 0) {
             orderings_vec = {force_id_override};
+        } else if (!user_orderings.empty()) {
+            orderings_vec = user_orderings;
+            sTiles::Logger::timing("│   ↪ Ordering candidates from sTiles_set_ordering_mode("
+                + std::to_string(stiles_control_params[sTiles::param::OrderingMode])
+                + "): " + std::to_string(orderings_vec.size()) + " selected");
         } else {
             const int n = scheme.dim;
             if (n < 5000) {
@@ -1769,8 +1804,9 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
         //  computing a permutation that gets thrown away. The dim cap is
         //  removed below so SCOTCH is pruned regardless of size when the
         //  graph-like predicate fires.)
-        // Skip pruning when a forced ordering was requested — respect user's choice.
-        if (force_id_override == 0 && mean_deg > 0 && mean_deg < 50) {
+        // Skip pruning when a forced ordering or an explicit user candidate
+        // list was requested — respect the user's choice.
+        if (force_id_override == 0 && user_orderings.empty() && mean_deg > 0 && mean_deg < 50) {
             std::vector<int> pruned;
             pruned.reserve(orderings_vec.size());
             for (int id : orderings_vec) {
@@ -1786,7 +1822,7 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
         // (4/41/42) from the bake-off on any platform. Default OFF — SCOTCH runs
         // everywhere, including macOS. (Used to A/B the SCOTCH-free fallback while
         // chasing the arm64 SCOTCH crash; the real fix keeps SCOTCH enabled.)
-        {
+        if (user_orderings.empty()) {
             const char* _dis = std::getenv("STILES_DISABLE_SCOTCH");
             if (_dis && std::atoi(_dis) == 1) {
                 std::vector<int> no_scotch;
@@ -2239,10 +2275,10 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
 
         // Evaluation result — keeps L structure and tile state for winner installation
         struct EvalResult {
-            int nnz_L = -1;
+            int64_t nnz_L = -1;              // nnz(L) can exceed INT_MAX for huge factors
             int tiles_L = -1;
-            std::vector<int> cp;
-            std::vector<int> ri;
+            std::vector<int64_t> cp;         // CSC column pointers (64-bit offsets)
+            std::vector<int> ri;             // row indices (< n, stay 32-bit)
             TileIndexer::State state;
             std::vector<int> full_perm;
         };
@@ -2284,7 +2320,7 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
                 std::sort(rowind.begin() + colptr[j], rowind.begin() + colptr[j + 1]);
             const bool _sp = (std::getenv("STILES_PROFILE_SYM") != nullptr);
             double _t_fill = omp_get_wtime();
-            result.nnz_L = sTiles::symbolic_chol_fillin(n, colptr, rowind, result.cp, result.ri, 2'000'000'000UL);
+            result.nnz_L = sTiles::symbolic_chol_fillin(n, colptr, rowind, result.cp, result.ri, kMaxFactorNnz);
             if (_sp) sTiles::Logger::timing_always("│   ↪ symbolic_chol_fillin(serial): ", omp_get_wtime()-_t_fill, " s  (nnz_L=", result.nnz_L, ")");
             if (result.nnz_L < 0) return result;
 
@@ -2293,7 +2329,7 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
             std::vector<int> L_row(result.nnz_L), L_col(result.nnz_L);
             #pragma omp parallel for num_threads(eval_threads) schedule(dynamic, 256) if(eval_threads > 1)
             for (int j = 0; j < n; ++j)
-                for (int p = result.cp[j]; p < result.cp[j + 1]; ++p) {
+                for (int64_t p = result.cp[j]; p < result.cp[j + 1]; ++p) {
                     L_row[p] = result.ri[p];
                     L_col[p] = j;
                 }
@@ -2376,9 +2412,9 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
         // Primary-metric selection (class-adaptive).
         int best_idx = -1;
         int best_tiles_L = INT_MAX;
-        int best_nnzL_seen = INT_MAX;
+        int64_t best_nnzL_seen = INT64_MAX;
         for (int i = 0; i < max_eval; ++i) {
-            const int nnzL = evals[i].nnz_L;
+            const int64_t nnzL = evals[i].nnz_L;
             const int tilesL = evals[i].tiles_L;
             if (tilesL < 0 || nnzL < 0) continue;
             bool is_better = false;
@@ -2458,10 +2494,12 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
             if (apply) {
                 // Pick best ND candidate among the evaluated set by the primary metric.
                 int nd_idx = -1;
-                int nd_tiles = INT_MAX, nd_nnz = INT_MAX;
+                int nd_tiles = INT_MAX;
+                int64_t nd_nnz = INT64_MAX;
                 for (int i = 0; i < max_eval; ++i) {
                     if (!is_nd_id(candidates[i].id)) continue;
-                    const int tL = evals[i].tiles_L, nL = evals[i].nnz_L;
+                    const int tL = evals[i].tiles_L;
+                    const int64_t nL = evals[i].nnz_L;
                     if (tL < 0 || nL < 0) continue;
                     bool nd_better = (nd_idx == -1);
                     if (!nd_better) {
@@ -2522,8 +2560,8 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
         // Cap nnz(L) at the best ordering's value for early abort.
         if (mean_deg > 0 && mean_deg <= 100) {
             const int n = scheme.dim;
-            const long long id_nnz_limit = (best_nnzL_seen < INT_MAX)
-                ? static_cast<long long>(best_nnzL_seen) : 2'000'000'000LL;
+            const long long id_nnz_limit = (best_nnzL_seen < INT64_MAX)
+                ? static_cast<long long>(best_nnzL_seen) : static_cast<long long>(kMaxFactorNnz);
             std::vector<int> colptr_id(n + 1, 0);
             for (int k = 0; k < scheme.nnz; ++k) {
                 int nr = call.row_indices[k];
@@ -2544,13 +2582,14 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
             }
             for (int j = 0; j < n; ++j)
                 std::sort(rowind_id.begin() + colptr_id[j], rowind_id.begin() + colptr_id[j + 1]);
-            std::vector<int> cp_id, ri_id;
-            const int nnzL_id = sTiles::symbolic_chol_fillin(n, colptr_id, rowind_id, cp_id, ri_id, id_nnz_limit);
+            std::vector<int64_t> cp_id;
+            std::vector<int> ri_id;
+            const int64_t nnzL_id = sTiles::symbolic_chol_fillin(n, colptr_id, rowind_id, cp_id, ri_id, id_nnz_limit);
             int tilesL_id = -1;
             if (nnzL_id >= 0) {
                 std::vector<int> L_row(nnzL_id), L_col(nnzL_id);
                 for (int j = 0; j < n; ++j)
-                    for (int p = cp_id[j]; p < cp_id[j + 1]; ++p) {
+                    for (int64_t p = cp_id[j]; p < cp_id[j + 1]; ++p) {
                         L_row[p] = ri_id[p];
                         L_col[p] = j;
                     }
@@ -2593,7 +2632,7 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
                 scheme.state             = std::move(best_eval.state);
                 scheme.numActiveTiles    = best_eval.tiles_L;
                 scheme.nnz_factor        = static_cast<long long>(best_eval.nnz_L);
-                scheme.L_colptr = OrderingMemoryManager::allocate<int>(n + 1, group_index);
+                scheme.L_colptr = OrderingMemoryManager::allocate<int64_t>(n + 1, group_index);
                 scheme.L_rowind = OrderingMemoryManager::allocate<int>(best_eval.nnz_L, group_index);
                 std::copy(best_eval.cp.begin(), best_eval.cp.end(), scheme.L_colptr);
                 std::copy(best_eval.ri.begin(), best_eval.ri.end(), scheme.L_rowind);
@@ -2656,7 +2695,7 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
                 // hands sTiles_assign_values the ORIGINAL value array → the
                 // sparse module reads past it (heap-buffer-overflow at
                 // sparse/api.cpp assign_values). Mode 2 must stay unpadded.
-                const int _ttm_pad = stiles_control_params[3];
+                const int _ttm_pad = stiles_control_params[sTiles::param::TileTypeMode];
                 // Mode-aware partitioning gate: engage padding ONLY when the
                 // matrix will resolve to a PARTITIONABLE mode (semisparse/dense),
                 // NEVER sparse (mode 2) -- padding a sparse matrix corrupts the
@@ -2741,7 +2780,7 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
                         scheme.state         = std::move(me.state);
                         scheme.numActiveTiles = me.tiles_L;
                         scheme.nnz_factor    = static_cast<long long>(me.nnz_L);
-                        scheme.L_colptr = OrderingMemoryManager::allocate<int>(n + 1, group_index);
+                        scheme.L_colptr = OrderingMemoryManager::allocate<int64_t>(n + 1, group_index);
                         scheme.L_rowind = OrderingMemoryManager::allocate<int>(me.nnz_L, group_index);
                         std::copy(me.cp.begin(), me.cp.end(), scheme.L_colptr);
                         std::copy(me.ri.begin(), me.ri.end(), scheme.L_rowind);
@@ -2793,12 +2832,13 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
                 }
                 for (int j = 0; j < n_id; ++j)
                     std::sort(rowind_id.begin() + colptr_id[j], rowind_id.begin() + colptr_id[j + 1]);
-                std::vector<int> cp_id, ri_id;
-                const int nnzL_id = sTiles::symbolic_chol_fillin(n_id, colptr_id, rowind_id, cp_id, ri_id, 2'000'000'000UL);
+                std::vector<int64_t> cp_id;
+                std::vector<int> ri_id;
+                const int64_t nnzL_id = sTiles::symbolic_chol_fillin(n_id, colptr_id, rowind_id, cp_id, ri_id, kMaxFactorNnz);
                 if (nnzL_id >= 0) {
                     std::vector<int> L_row(nnzL_id), L_col(nnzL_id);
                     for (int j = 0; j < n_id; ++j)
-                        for (int p = cp_id[j]; p < cp_id[j + 1]; ++p) {
+                        for (int64_t p = cp_id[j]; p < cp_id[j + 1]; ++p) {
                             L_row[p] = ri_id[p];
                             L_col[p] = j;
                         }
@@ -2810,7 +2850,7 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
                             scheme.dimTiledMatrix, total);
                         id_active = total;
                         scheme.nnz_factor = static_cast<long long>(nnzL_id);
-                        scheme.L_colptr = OrderingMemoryManager::allocate<int>(n_id + 1, group_index);
+                        scheme.L_colptr = OrderingMemoryManager::allocate<int64_t>(n_id + 1, group_index);
                         scheme.L_rowind = OrderingMemoryManager::allocate<int>(nnzL_id, group_index);
                         std::copy(cp_id.begin(), cp_id.end(), scheme.L_colptr);
                         std::copy(ri_id.begin(), ri_id.end(), scheme.L_rowind);
@@ -3782,7 +3822,7 @@ StatusCode symbolic_ND_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int
     // ========== PER-PARTITION TILE-LEVEL ORDERING ==========
     // Apply tile-level ordering independently to each partition (P1, P2, Separator)
     if (scheme.use_ordering && scheme.partition_sizes &&
-        stiles_control_params[4] > 0 && !user_perm_force) {
+        stiles_control_params[sTiles::param::TileOrderingStrategy] > 0 && !user_perm_force) {
 
         const double t_partition_tile = omp_get_wtime();
         sTiles::Logger::debug("│   ↪ Starting per-partition tile-level ordering");
@@ -3798,7 +3838,7 @@ StatusCode symbolic_ND_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int
             const int sep_size = scheme.partition_sizes[2];
 
             // Parse tile-level ordering strategies
-            auto strategies = unique_digits_1_to_9(stiles_control_params[4]);
+            auto strategies = unique_digits_1_to_9(stiles_control_params[sTiles::param::TileOrderingStrategy]);
 
             if (strategies.empty()) {
                 sTiles::Logger::warning("│   ↪ No valid tile ordering strategies found");

@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "../common/stiles_mem_alloc.hpp"
+#include "../common/stiles_logger.hpp"
 
 struct TileAllocationRecord {
     void* ptr;
@@ -180,7 +181,7 @@ private:
     }
 
     static void reportError(const std::string& message, const char* file = __FILE__, int line = __LINE__) {
-        std::cerr << "TileMemoryManager Error: " << message << " (File: " << file << ", Line: " << line << ")\n";
+        sTiles::Logger::error("TileMemoryManager: ", message, " (File: ", file, ", Line: ", line, ")");
         throw std::runtime_error(message);
     }
 

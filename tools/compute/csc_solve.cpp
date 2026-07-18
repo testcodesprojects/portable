@@ -53,7 +53,7 @@ inline void pack_L_columns_range_org(TiledMatrix* scheme,
                                  const int N, const int ts, const int nt,
                                  const int Adesc_lm1) {
     double*    Lv  = scheme->L_values;
-    const int* Lcp = scheme->L_colptr;
+    const int64_t* Lcp = scheme->L_colptr;
     const int* Lri = scheme->L_rowind;
 
     for (int j = j_lo; j < j_hi; ++j) {
@@ -61,7 +61,7 @@ inline void pack_L_columns_range_org(TiledMatrix* scheme,
         const int lj = j % ts;
         const int ld = (tr < Adesc_lm1) ? ts : (N % ts);
 
-        for (int ptr = Lcp[j]; ptr < Lcp[j + 1]; ++ptr) {
+        for (int64_t ptr = Lcp[j]; ptr < Lcp[j + 1]; ++ptr) {
             const int i        = Lri[ptr];
             const int tc       = i / ts;
             const int li       = i % ts;
@@ -104,11 +104,11 @@ inline void pack_L_columns_range(TiledMatrix* scheme,
                                  const int /*Adesc_lm1*/) {
     double* __restrict__         Lv  = scheme->L_values;
     const double* const* __restrict__ src = scheme->L_src;
-    const int*                   Lcp = scheme->L_colptr;
-    const int                    lo  = Lcp[j_lo];
-    const int                    hi  = Lcp[j_hi];
+    const int64_t*                   Lcp = scheme->L_colptr;
+    const int64_t lo  = Lcp[j_lo];
+    const int64_t hi  = Lcp[j_hi];
 
-    for (int ptr = lo; ptr < hi; ++ptr) Lv[ptr] = *src[ptr];
+    for (int64_t ptr = lo; ptr < hi; ++ptr) Lv[ptr] = *src[ptr];
 }
 
 // Dispatch helper: pick the fast L_src kernel when the precomputed table
@@ -290,7 +290,7 @@ static inline bool _pack_prep_once(TiledMatrix* scheme) {
         if (!scheme->L_src) return false;
         scheme->pack_zero = 0.0;
 
-        const int*  Lcp = scheme->L_colptr;
+        const int64_t*  Lcp = scheme->L_colptr;
         const int*  Lri = scheme->L_rowind;
         const double* const zero = &scheme->pack_zero;
 
@@ -298,7 +298,7 @@ static inline bool _pack_prep_once(TiledMatrix* scheme) {
             const int tr = j / ts;
             const int lj = j % ts;
             const int ld = (tr < Adesc_lm1) ? ts : (N % ts);
-            for (int ptr = Lcp[j]; ptr < Lcp[j + 1]; ++ptr) {
+            for (int64_t ptr = Lcp[j]; ptr < Lcp[j + 1]; ++ptr) {
                 const int i        = Lri[ptr];
                 const int tc       = i / ts;
                 const int li       = i % ts;
@@ -353,7 +353,7 @@ void pack_L_values(stiles_context_t* stile, TiledMatrix* scheme) {
     const int  Adesc_lm1 = scheme->Adesc_lm1_cached;
 
     int* params = sTiles_get_params();
-    const bool use_omp = (params && params[8] == 1);
+    const bool use_omp = (params && params[sTiles::param::UseOMP] == 1);
 
     if (use_omp) {
         const int pack_threads = (scheme->num_cores > 0) ? scheme->num_cores : 1;
@@ -396,7 +396,7 @@ void pack_L_values(TiledMatrix* scheme) {
 // ---------------------------------------------------------------------------
 void csc_dtrsm(const TiledMatrix* scheme, double* x, int solve_type) {
     const int                       N   = scheme->dim;
-    const int*    __restrict__      Lcp = scheme->L_colptr;
+    const int64_t*    __restrict__      Lcp = scheme->L_colptr;
     const int*    __restrict__      Lri = scheme->L_rowind;
     const double* __restrict__      Lv  = scheme->L_values;
     double*       __restrict__      x_  = x;  // local restrict-qualified alias
@@ -404,7 +404,7 @@ void csc_dtrsm(const TiledMatrix* scheme, double* x, int solve_type) {
     if (solve_type == 0 || solve_type == 2) {
         for (int j = 0; j < N; ++j) {
             const double xj = (x_[j] /= Lv[Lcp[j]]);
-            for (int ptr = Lcp[j] + 1; ptr < Lcp[j + 1]; ++ptr)
+            for (int64_t ptr = Lcp[j] + 1; ptr < Lcp[j + 1]; ++ptr)
                 x_[Lri[ptr]] -= Lv[ptr] * xj;
         }
     }
@@ -446,14 +446,14 @@ void csc_dtrsm(const TiledMatrix* scheme, double* x, int solve_type) {
         if (kernel == 0) {
             for (int j = N - 1; j >= 0; --j) {
                 double acc = x_[j];
-                for (int ptr = Lcp[j] + 1; ptr < Lcp[j + 1]; ++ptr)
+                for (int64_t ptr = Lcp[j] + 1; ptr < Lcp[j + 1]; ++ptr)
                     acc -= Lv[ptr] * x_[Lri[ptr]];
                 x_[j] = acc / Lv[Lcp[j]];
             }
         } else {
             for (int j = N - 1; j >= 0; --j) {
-                const int ifrom = Lcp[j] + 1;
-                const int ito   = Lcp[j + 1];
+                const int64_t ifrom = Lcp[j] + 1;
+                const int64_t ito   = Lcp[j + 1];
                 const double acc = x_[j] - stiles_sparse_ddot(ito - ifrom, Lv + ifrom, x_, Lri + ifrom);
                 x_[j] = acc / Lv[Lcp[j]];
             }
@@ -476,7 +476,7 @@ void csc_dtrsm(const TiledMatrix* scheme, double* x, int solve_type) {
 // ---------------------------------------------------------------------------
 void csc_dtrsm_multi(const TiledMatrix* scheme, double* X, int nrhs, int ldb, int solve_type) {
     const int                       N   = scheme->dim;
-    const int*    __restrict__      Lcp = scheme->L_colptr;
+    const int64_t*    __restrict__      Lcp = scheme->L_colptr;
     const int*    __restrict__      Lri = scheme->L_rowind;
     const double* __restrict__      Lv  = scheme->L_values;
     double*       __restrict__      X_  = X;   // local restrict alias for the SIMD hot loop
@@ -491,7 +491,7 @@ void csc_dtrsm_multi(const TiledMatrix* scheme, double* X, int nrhs, int ldb, in
                 X_[static_cast<std::size_t>(k) * ldb + j] = v;
                 xj[k] = v;
             }
-            for (int ptr = Lcp[j] + 1; ptr < Lcp[j + 1]; ++ptr) {
+            for (int64_t ptr = Lcp[j] + 1; ptr < Lcp[j + 1]; ++ptr) {
                 const int    i   = Lri[ptr];
                 const double Lij = Lv[ptr];
                 #pragma omp simd
@@ -526,8 +526,8 @@ void csc_dtrsm_multi(const TiledMatrix* scheme, double* X, int nrhs, int ldb, in
             if (!announced) {
                 announced = true;
                 const long long avg = (nnzL > N) ? (nnzL - N) / (long long)N : 0;
-                std::fprintf(stderr,
-                    "[csc_dtrsm_multi] N=%d nnzL=%lld avg_col_len=%lld → kernel=%d (%s; %s)\n",
+                sTiles::Logger::debugf(
+                    "[csc_dtrsm_multi] N=%d nnzL=%lld avg_col_len=%lld -> kernel=%d (%s; %s)",
                     N, nnzL, avg, k,
                     k == 0 ? "K-wide SIMD" : "K x stiles_sparse_ddot", how);
             }
@@ -541,7 +541,7 @@ void csc_dtrsm_multi(const TiledMatrix* scheme, double* X, int nrhs, int ldb, in
                 for (int k = 0; k < nrhs; ++k) {
                     acc[k] = X_[static_cast<std::size_t>(k) * ldb + j];
                 }
-                for (int ptr = Lcp[j] + 1; ptr < Lcp[j + 1]; ++ptr) {
+                for (int64_t ptr = Lcp[j] + 1; ptr < Lcp[j + 1]; ++ptr) {
                     const int    i   = Lri[ptr];
                     const double Lij = Lv[ptr];
                     #pragma omp simd
@@ -557,8 +557,8 @@ void csc_dtrsm_multi(const TiledMatrix* scheme, double* X, int nrhs, int ldb, in
             }
         } else {
             for (int j = N - 1; j >= 0; --j) {
-                const int    ifrom    = Lcp[j] + 1;
-                const int    ito      = Lcp[j + 1];
+                const int64_t ifrom    = Lcp[j] + 1;
+                const int64_t ito      = Lcp[j + 1];
                 const int    n        = ito - ifrom;
                 const double inv_diag = 1.0 / Lv[Lcp[j]];
                 for (int k = 0; k < nrhs; ++k) {
@@ -581,7 +581,7 @@ void csc_dtrsm_multi(const TiledMatrix* scheme, double* X, int nrhs, int ldb, in
 void csc_dtrsm_multi_row(const TiledMatrix* scheme, double* X, int nrhs,
                          int ldb_row, int solve_type) {
     const int                       N   = scheme->dim;
-    const int*    __restrict__      Lcp = scheme->L_colptr;
+    const int64_t*    __restrict__      Lcp = scheme->L_colptr;
     const int*    __restrict__      Lri = scheme->L_rowind;
     const double* __restrict__      Lv  = scheme->L_values;
     double*       __restrict__      X_  = X;
@@ -597,7 +597,7 @@ void csc_dtrsm_multi_row(const TiledMatrix* scheme, double* X, int nrhs,
                 Xj[k]  = v;
                 xj[k]  = v;
             }
-            for (int ptr = Lcp[j] + 1; ptr < Lcp[j + 1]; ++ptr) {
+            for (int64_t ptr = Lcp[j] + 1; ptr < Lcp[j + 1]; ++ptr) {
                 const int    i   = Lri[ptr];
                 const double Lij = Lv[ptr];
                 double* __restrict__ Xi = X_ + static_cast<std::size_t>(i) * ldb_row;
@@ -642,8 +642,8 @@ void csc_dtrsm_multi_row(const TiledMatrix* scheme, double* X, int nrhs,
             if (!announced) {
                 announced = true;
                 const long long avg = (nnzL > N) ? (nnzL - N) / (long long)N : 0;
-                std::fprintf(stderr,
-                    "[csc_dtrsm_multi_row] N=%d nnzL=%lld avg_col_len=%lld nrhs=%d → kernel=%d (%s; %s)\n",
+                sTiles::Logger::debugf(
+                    "[csc_dtrsm_multi_row] N=%d nnzL=%lld avg_col_len=%lld nrhs=%d -> kernel=%d (%s; %s)",
                     N, nnzL, avg, nrhs, k,
                     k == 0 ? "K-wide SIMD" : "K x stiles_sparse_ddot", how);
             }
@@ -656,7 +656,7 @@ void csc_dtrsm_multi_row(const TiledMatrix* scheme, double* X, int nrhs,
                 double acc[64];
                 #pragma omp simd
                 for (int k = 0; k < nrhs; ++k) acc[k] = Xj[k];
-                for (int ptr = Lcp[j] + 1; ptr < Lcp[j + 1]; ++ptr) {
+                for (int64_t ptr = Lcp[j] + 1; ptr < Lcp[j + 1]; ++ptr) {
                     const int    i   = Lri[ptr];
                     const double Lij = Lv[ptr];
                     const double* __restrict__ Xi = X_ + static_cast<std::size_t>(i) * ldb_row;
@@ -673,8 +673,8 @@ void csc_dtrsm_multi_row(const TiledMatrix* scheme, double* X, int nrhs,
             // by N (no column has more than N nonzeros).
             std::vector<int> idx_scaled(N);
             for (int j = N - 1; j >= 0; --j) {
-                const int ifrom = Lcp[j] + 1;
-                const int ito   = Lcp[j + 1];
+                const int64_t ifrom = Lcp[j] + 1;
+                const int64_t ito   = Lcp[j + 1];
                 const int n     = ito - ifrom;
                 for (int t = 0; t < n; ++t) {
                     idx_scaled[t] = Lri[ifrom + t] * ldb_row;

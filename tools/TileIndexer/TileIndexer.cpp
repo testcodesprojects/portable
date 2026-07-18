@@ -81,7 +81,7 @@ std::size_t upper_tile_index(int row_tile, int col_tile, int num_tiles) {
 }
 
 // ---- Common pre-checks ----
-static inline bool invalid_inputs(const int* r, const int* c, int nnz, int n, int tile) {
+static inline bool invalid_inputs(const int* r, const int* c, int64_t nnz, int n, int tile) {
     return (!r || !c || nnz <= 0 || n <= 0 || tile <= 0);
 }
 
@@ -114,7 +114,7 @@ static inline bool out_of_range(int x, int n) {
  */
 int countActiveTiles(const int* row_indices,
                      const int* col_indices,
-                     int nnz, int n, int tile_size,
+                     int64_t nnz, int n, int tile_size,
                      Method method,
                      State* state,
                      int num_cores,
@@ -156,12 +156,12 @@ int countActiveTiles(const int* row_indices,
                 const std::size_t words = (tri_size + 63ULL) >> 6;
                 std::vector<std::vector<std::uint64_t>> locals(
                     static_cast<std::size_t>(T), std::vector<std::uint64_t>(words, 0ULL));
-                const int chunk = std::max(1024, nnz / (T * 16));
+                const int64_t chunk = std::max<int64_t>(1024, nnz / (T * 16));
                 #pragma omp parallel num_threads(T)
                 {
                     std::vector<std::uint64_t>& B = locals[static_cast<std::size_t>(omp_get_thread_num())];
                     #pragma omp for schedule(static, chunk)
-                    for (int k = 0; k < nnz; ++k) {
+                    for (int64_t k = 0; k < nnz; ++k) {
                         const int r = row_indices[k], c = col_indices[k];
                         if (out_of_range(r, n) || out_of_range(c, n)) continue;
                         int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift) : r / tile_size;
@@ -188,7 +188,7 @@ int countActiveTiles(const int* row_indices,
 #endif
             int count = 0;
             if (pow2) {
-                for (int k = 0; k < nnz; ++k) {
+                for (int64_t k = 0; k < nnz; ++k) {
                     const int r = row_indices[k], c = col_indices[k];
                     if (out_of_range(r, n) || out_of_range(c, n)) continue;
                     int ti = static_cast<int>(static_cast<unsigned>(r) >> shift);
@@ -198,7 +198,7 @@ int countActiveTiles(const int* row_indices,
                     if (!st.active_char[u]) { st.active_char[u] = 1; ++count; }
                 }
             } else {
-                for (int k = 0; k < nnz; ++k) {
+                for (int64_t k = 0; k < nnz; ++k) {
                     const int r = row_indices[k], c = col_indices[k];
                     if (out_of_range(r, n) || out_of_range(c, n)) continue;
                     int ti = r / tile_size, tj = c / tile_size;
@@ -216,7 +216,7 @@ int countActiveTiles(const int* row_indices,
             if (method == Method::LazyLookUp) st.lazy_index_map.assign(tri_size, -1);
             int count = 0;
             if (pow2) {
-                for (int k = 0; k < nnz; ++k) {
+                for (int64_t k = 0; k < nnz; ++k) {
                     const int r = row_indices[k], c = col_indices[k];
                     if (out_of_range(r, n) || out_of_range(c, n)) continue;
                     int ti = static_cast<int>(static_cast<unsigned>(r) >> shift);
@@ -229,7 +229,7 @@ int countActiveTiles(const int* row_indices,
                     }
                 }
             } else {
-                for (int k = 0; k < nnz; ++k) {
+                for (int64_t k = 0; k < nnz; ++k) {
                     const int r = row_indices[k], c = col_indices[k];
                     if (out_of_range(r, n) || out_of_range(c, n)) continue;
                     int ti = r / tile_size, tj = c / tile_size;
@@ -253,7 +253,7 @@ int countActiveTiles(const int* row_indices,
             const std::size_t words = (tri_size + W - 1) / W;
             st.bits.assign(words, 0ULL);
             if (pow2) {
-                for (int k = 0; k < nnz; ++k) {
+                for (int64_t k = 0; k < nnz; ++k) {
                     const int r = row_indices[k], c = col_indices[k];
                     if (out_of_range(r, n) || out_of_range(c, n)) continue;
                     int ti = static_cast<int>(static_cast<unsigned>(r) >> shift);
@@ -264,7 +264,7 @@ int countActiveTiles(const int* row_indices,
                     st.bits[u >> 6] |= (1ULL << (u & 63ULL));
                 }
             } else {
-                for (int k = 0; k < nnz; ++k) {
+                for (int64_t k = 0; k < nnz; ++k) {
                     const int r = row_indices[k], c = col_indices[k];
                     if (out_of_range(r, n) || out_of_range(c, n)) continue;
                     int ti = r / tile_size, tj = c / tile_size;
@@ -299,7 +299,7 @@ int countActiveTiles(const int* row_indices,
             const std::size_t block_bits = static_cast<std::size_t>(B) * static_cast<std::size_t>(B);
             const std::size_t words_per_block = (block_bits + 63ULL) >> 6;
 
-            for (int k = 0; k < nnz; ++k) {
+            for (int64_t k = 0; k < nnz; ++k) {
                 const int r = row_indices[k], c = col_indices[k];
                 if (out_of_range(r, n) || out_of_range(c, n)) continue;
                 int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift) : (r / tile_size);
@@ -348,7 +348,7 @@ int countActiveTiles(const int* row_indices,
             const std::size_t block_bits = static_cast<std::size_t>(B) * static_cast<std::size_t>(B);
             const std::size_t words_per_block = (block_bits + 63ULL) >> 6;
 
-            for (int k = 0; k < nnz; ++k) {
+            for (int64_t k = 0; k < nnz; ++k) {
                 const int r = row_indices[k], c = col_indices[k];
                 if (out_of_range(r, n) || out_of_range(c, n)) continue;
                 int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift) : (r / tile_size);
@@ -411,7 +411,7 @@ int countActiveTiles(const int* row_indices,
 
             int count = 0;
             if (pow2) {
-                for (int k = 0; k < nnz; ++k) {
+                for (int64_t k = 0; k < nnz; ++k) {
                     const int r = row_indices[k], c = col_indices[k];
                     if (out_of_range(r, n) || out_of_range(c, n)) continue;
                     int ti = static_cast<int>(static_cast<unsigned>(r) >> shift);
@@ -422,7 +422,7 @@ int countActiveTiles(const int* row_indices,
                     test_and_set(u, count);
                 }
             } else {
-                for (int k = 0; k < nnz; ++k) {
+                for (int64_t k = 0; k < nnz; ++k) {
                     const int r = row_indices[k], c = col_indices[k];
                     if (out_of_range(r, n) || out_of_range(c, n)) continue;
                     int ti = r / tile_size, tj = c / tile_size;
@@ -437,7 +437,7 @@ int countActiveTiles(const int* row_indices,
             st.S.clear();
             st.S.reserve(static_cast<std::size_t>(std::min<std::size_t>(nnz, tri_size)));
             if (pow2) {
-                for (int k = 0; k < nnz; ++k) {
+                for (int64_t k = 0; k < nnz; ++k) {
                     const int r = row_indices[k], c = col_indices[k];
                     if (out_of_range(r, n) || out_of_range(c, n)) continue;
                     int ti = static_cast<int>(static_cast<unsigned>(r) >> shift);
@@ -446,7 +446,7 @@ int countActiveTiles(const int* row_indices,
                     st.S.insert(off[static_cast<std::size_t>(ti)] + static_cast<std::size_t>(tj - ti));
                 }
             } else {
-                for (int k = 0; k < nnz; ++k) {
+                for (int64_t k = 0; k < nnz; ++k) {
                     const int r = row_indices[k], c = col_indices[k];
                     if (out_of_range(r, n) || out_of_range(c, n)) continue;
                     int ti = r / tile_size, tj = c / tile_size;
@@ -460,7 +460,7 @@ int countActiveTiles(const int* row_indices,
             st.ids.clear();
             st.ids.reserve(static_cast<std::size_t>(nnz));
             if (pow2) {
-                for (int k = 0; k < nnz; ++k) {
+                for (int64_t k = 0; k < nnz; ++k) {
                     const int r = row_indices[k], c = col_indices[k];
                     if (out_of_range(r, n) || out_of_range(c, n)) continue;
                     int ti = static_cast<int>(static_cast<unsigned>(r) >> shift);
@@ -469,7 +469,7 @@ int countActiveTiles(const int* row_indices,
                     st.ids.push_back(off[static_cast<std::size_t>(ti)] + static_cast<std::size_t>(tj - ti));
                 }
             } else {
-                for (int k = 0; k < nnz; ++k) {
+                for (int64_t k = 0; k < nnz; ++k) {
                     const int r = row_indices[k], c = col_indices[k];
                     if (out_of_range(r, n) || out_of_range(c, n)) continue;
                     int ti = r / tile_size, tj = c / tile_size;
@@ -485,7 +485,7 @@ int countActiveTiles(const int* row_indices,
             // Fallback to CharMask
             st.active_char.assign(tri_size, 0);
             int count = 0;
-            for (int k = 0; k < nnz; ++k) {
+            for (int64_t k = 0; k < nnz; ++k) {
                 int r = row_indices[k], c = col_indices[k];
                 if (r < 0 || c < 0 || r >= n || c >= n) continue;
                 int ti = r / tile_size, tj = c / tile_size;

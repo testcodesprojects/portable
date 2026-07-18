@@ -6,6 +6,7 @@
 #include <vector>
 #include <cstdio>
 #include <cstdlib>
+#include "../common/stiles_logger.hpp"
 
 extern "C" {
     void amdnew_(int* N, int* PE, int* IW, int* LEN, int* IWLEN, int* PFREE,
@@ -76,7 +77,7 @@ void stiles_runAMDNEW(int* csr_i, int* csr_j, int N, int nnz,
         (*perm)[(*iperm)[i]] = i;
 
     if (NCMPA > 0)
-        fprintf(stderr, "[AMDNEW] %d garbage collections (N=%d)\n", NCMPA, N);
+        sTiles::Logger::errorf("[AMDNEW] %d garbage collections (N=%d)", NCMPA, N);
 }
 
 } // namespace sTiles

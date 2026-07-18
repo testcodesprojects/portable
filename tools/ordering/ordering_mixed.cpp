@@ -26,13 +26,13 @@ void checkPermutation(int* perm, size_t N) {
     for (size_t i = 0; i < N; ++i) {
         if (!found[i]) {
             delete[] found; // Clean up memory
-            std::cout << "-----------------> i: " << i << std::endl;
+            sTiles::Logger::error("permutation check: missing element at index ", i);
             throw std::logic_error("Missing element in permutation");
         }
     }
 
     delete[] found; // Clean up memory
-    std::cout << "Permutation is valid.\n";
+    sTiles::Logger::debug("Permutation is valid.");
 }
 
 
@@ -130,7 +130,7 @@ void stiles_runNDRCM(int** indices_i, int** indices_j, int N, int nnz, int m, in
     /*try {
         checkPermutation(*perm, N);
     } catch (const std::exception& e) {
-        std::cerr << e.what() << '\n';
+        sTiles::Logger::error(e.what());
     }*/
 
     for(int i=0; i<nnz;i++){

@@ -157,8 +157,8 @@ inline sTiles::StatusCode corner_probe(sTiles_call **call_info,
     // Dense (mode 0) parallel worker is already well-parallelized so tree
     // only helps for true arrowhead (sep ≤ 4).
     const int* probe_params = sTiles_get_params();
-    const int tile_type_mode = (probe_params ? probe_params[3] : 0);
-    const int use_omp        = (probe_params ? probe_params[8] : 0);
+    const int tile_type_mode = (probe_params ? probe_params[sTiles::param::TileTypeMode] : 0);
+    const int use_omp        = (probe_params ? probe_params[sTiles::param::UseOMP] : 0);
     (void)use_omp;
     constexpr int kMode0MaxSep   = 4;   // dense always conservative
     constexpr int kModeSemiMaxSep = 5;  // semisparse (both backends): cap at 5
@@ -253,7 +253,7 @@ inline sTiles::StatusCode corner_probe(sTiles_call **call_info,
     // When chosen_sep would have been 0 (no heavy slot), we use probe_sep
     // so the tree spans the full scanned corner.
     {
-        const bool param_force = (probe_params && probe_params[26] != 0);
+        const bool param_force = (probe_params && probe_params[sTiles::param::TreePathForce] != 0);
         const char* env_force = std::getenv("STILES_CORNER_PROBE_FORCE");
         const bool env_force_enabled = (env_force && env_force[0] == '1');
         const bool force_enabled = param_force || env_force_enabled;
@@ -292,7 +292,7 @@ inline sTiles::StatusCode corner_probe(sTiles_call **call_info,
     // env var STILES_CORNER_PROBE_ACTIVATE=1 as a fallback for shell-driven testing.
     // Default is OFF — callers opt in via sTiles_set_tree_path_enable(1).
     if (work_qualifies) {
-        const bool param_enabled = (probe_params && probe_params[25] != 0);
+        const bool param_enabled = (probe_params && probe_params[sTiles::param::TreePathEnable] != 0);
         const char* env = std::getenv("STILES_CORNER_PROBE_ACTIVATE");
         const bool env_enabled = (env && env[0] == '1');
         if (param_enabled || env_enabled) {

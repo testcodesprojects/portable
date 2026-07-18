@@ -257,7 +257,7 @@
     inline StatusCode build_all_tile_lookup(sTiles_call **call_info, TiledMatrix *scheme, int group_index, int num_cores) {
         // Check tile type mode
         int* params = sTiles_get_params();
-        const int tile_type_mode = params[3];
+        const int tile_type_mode = params[sTiles::param::TileTypeMode];
 
         // Only proceed if tile_type_mode is 3 (dense + semisparse together)
         if (tile_type_mode != 3) {
@@ -283,7 +283,7 @@
         // 2. Allocate Semisparse Core
         scheme->semisparseTileMetaCore = TileMemoryManager::allocate<SemisparseTileMetaCore>(num_active, group_index);
         if (!scheme->semisparseTileMetaCore) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for semisparseTileMetaCore (build_all).\n");
+            sTiles::Logger::errorf("Memory allocation failed for semisparseTileMetaCore (build_all).");
             return StatusCode::OutOfResources;
         }
         // Construct SemisparseTileMetaCore objects (contains std::vector members)
@@ -312,7 +312,7 @@
         }
 
         if (!scheme->tileMetaCore || !scheme->semisparseTileMetaCore || !scheme->sparseTileMetaCore || !scheme->sparseTileMetaData) {
-             std::fprintf(stderr, "ERROR: Memory allocation failed for one or more core metadata structures in build_all.\n");
+             sTiles::Logger::errorf("Memory allocation failed for one or more core metadata structures in build_all.");
              return StatusCode::OutOfResources;
         }
 

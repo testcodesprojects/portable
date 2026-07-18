@@ -49,7 +49,6 @@ double omp_sparse_dlogdet     (TiledMatrix* scheme);
 #define ADD_SEMISPARSE
 
 extern "C" int* sTiles_get_params();
-static int* stiles_control_params = sTiles_get_params();
 
 namespace sTiles {
 
@@ -137,6 +136,8 @@ namespace sTiles {
      */
     static double wrapper_logdet_scheme(const TiledMatrix* A)
     {
+        // Per-scheme resolved mode (falls back to global slot [3] if unset).
+        const int tile_mode = stiles_scheme_tile_mode(A);
 #ifdef STILES_SAFEMODE
         if (!A || !A->dense_tiles) {
             sTiles::Logger::error("LogDet: scheme->dense_tiles is nuuuuuuuuuuuull.");
@@ -144,14 +145,14 @@ namespace sTiles {
         }
 #else
 
-        if(stiles_control_params[3] == 0){
+        if(tile_mode == 0){
             // Mode 0 (dense): use dense tiles for logdet
             if (!A || !A->denseTiles || !A->tileMetaCore) {
                 sTiles::Logger::error("LogDet: fast-mode buffers (denseTiles/tileMetaCore) are not available.");
                 return std::numeric_limits<double>::quiet_NaN();
             }
 
-        }else if(stiles_control_params[3] == 1 || stiles_control_params[3] == 2){
+        }else if(tile_mode == 1 || tile_mode == 2){
 
             if (!A || !A->chunkedDenseTiles || !A->tileMetaCore || !A->semisparseTileMetaCore) {
                 sTiles::Logger::error("LogDet: fast-mode buffers (chunkedDenseTiles/tileMetaCore/semisparseTileMetaCore) are not available.");
@@ -173,14 +174,14 @@ namespace sTiles {
         }
 #else
 
-        if(stiles_control_params[3] == 0){
+        if(tile_mode == 0){
 
             if (!A->tileIndexMapper) {
                 sTiles::Logger::error("LogDet: legacy tileIndexMapper is null.");
                 return std::numeric_limits<double>::quiet_NaN();
             }
 
-        }else if(stiles_control_params[3] == 1){
+        }else if(tile_mode == 1){
 
             if (!A->tileIndexMapper) {
                 sTiles::Logger::error("LogDet: legacy tileIndexMapper is null for semisparse mode.");
@@ -211,7 +212,7 @@ namespace sTiles {
             int ts = 0;
             int diag_cols = 0;
 
-            if(stiles_control_params[3] == 0){
+            if(tile_mode == 0){
                 // Mode 0 (dense): use dense tiles
                 const TileMetaCore& meta = A->tileMetaCore[dense_idx];
                 ts = (meta.height > 0) ? meta.height : A->tile_size;
@@ -221,7 +222,7 @@ namespace sTiles {
                     return std::numeric_limits<double>::quiet_NaN();
                 }
 
-            }else if(stiles_control_params[3] == 1 || stiles_control_params[3] == 2){
+            }else if(tile_mode == 1 || tile_mode == 2){
 
                 // Extra validation for semisparse mode
                 if (dense_idx < 0 || dense_idx >= A->numActiveTiles) {
@@ -255,11 +256,11 @@ namespace sTiles {
                 diagElement = elements[j + static_cast<size_t>(j) * ts];
                 #else
 
-                if(stiles_control_params[3] == 0){
+                if(tile_mode == 0){
                     // Mode 0 (dense): standard column-major storage
                     diagElement = elements[j + static_cast<size_t>(j) * ts];
 
-                }else if(stiles_control_params[3] == 1 || stiles_control_params[3] == 2){
+                }else if(tile_mode == 1 || tile_mode == 2){
 
                     // Banded format: LAPACK upper banded storage
                     // For diagonal element (j,j): band = 0
@@ -397,6 +398,17 @@ extern "C" {
             return -1.0;
         }
 
+        // Refuse a scheme whose preprocessing failed (see sTiles_chol guard).
+        // Return a non-finite value so callers' finite-checks flag it honestly.
+        {
+            const int _gi = s->schemes[0]->call_lookup_table[group_index][call_index];
+            if (_gi < 0 || !s->schemes[_gi] || s->schemes[_gi]->preprocess_failed) {
+                sTiles::Logger::error("sTiles_get_logdet: group ", group_index, " call ", call_index,
+                    " was not successfully preprocessed; log-determinant unavailable.");
+                return std::numeric_limits<double>::quiet_NaN();
+            }
+        }
+
         // Get the factorization variant from the call info
         const int variant = s->stiles_groups[group_index].stiles_calls[call_index].factorization_variant;
 
@@ -417,12 +429,15 @@ extern "C" {
             sTiles::Logger::error("Target TiledMatrix scheme at index ", global_index_mapped, " is null.");
             return -1.0;
         }
+        // Per-scheme resolved mode (falls back to global slot [3] if unset).
+        const int tile_mode = stiles_scheme_tile_mode(scheme);
+        (void)tile_mode;  // unused in STILES_SAFEMODE builds
 
         // ── Sparse-module dispatch (tile_type_mode == 2) ─────────────────────
         // Routes through tools/compute/sparse_dlogdet.cpp.
         if (scheme->sparse_handle) {
             int* params = sTiles_get_params();
-            return (params && params[8] == -1)
+            return (params && params[sTiles::param::UseOMP] == -1)
                        ? sTiles::pthreads_sparse_dlogdet(scheme)
                        : sTiles::omp_sparse_dlogdet(scheme);
         }
@@ -454,14 +469,14 @@ extern "C" {
         }
 #else
 
-        if(stiles_control_params[3] == 0){
+        if(tile_mode == 0){
 
             if (!scheme->denseTiles || !scheme->tileMetaCore) {
                 sTiles::Logger::error("LogDet: fast-mode buffers (denseTiles/tileMetaCore) are not available.");
                 return -1.0;
             }
 
-        }else if(stiles_control_params[3] == 1){
+        }else if(tile_mode == 1){
 
             if (!scheme->chunkedDenseTiles || !scheme->tileMetaCore || !scheme->semisparseTileMetaCore) {
                 sTiles::Logger::error("LogDet: fast-mode buffers (chunkedDenseTiles/tileMetaCore/semisparseTileMetaCore) are not available.");

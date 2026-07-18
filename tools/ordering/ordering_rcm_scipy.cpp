@@ -18,6 +18,7 @@
 #include <cstdlib>
 
 #include "ordering_utils.hpp"
+#include "../common/stiles_logger.hpp"
 
 // ---------------------------------------------------------------------------
 // Internal helpers (anonymous namespace)
@@ -157,7 +158,7 @@ int stiles_runRCM_scipy(int** csr_i, int** csr_j, int N, int nnz, int m,
                          int** perm, int** iperm, bool safe)
 {
     if (!csr_i || !csr_j || !perm || !iperm || N <= 0 || nnz < 0 || m < 0 || m >= N) {
-        fprintf(stderr, "stiles_runRCM_scipy: invalid arguments (N=%d, nnz=%d, m=%d)\n",
+        sTiles::Logger::errorf("stiles_runRCM_scipy: invalid arguments (N=%d, nnz=%d, m=%d)",
                 N, nnz, m);
         return -1;
     }

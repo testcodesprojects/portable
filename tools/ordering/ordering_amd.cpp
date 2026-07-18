@@ -9,6 +9,7 @@
 #include <cstring>
 #include <algorithm>
 #include <numeric>
+#include "../common/stiles_logger.hpp"
 
 // Fortran AMD subroutine (compiled with gfortran, appends underscore)
 extern "C" {
@@ -97,7 +98,7 @@ void stiles_runAMD(int* csr_i, int* csr_j, int N, int nnz,
         (*perm)[(*iperm)[i]] = i;
 
     if (NCMPA > 0)
-        fprintf(stderr, "[AMD] %d garbage collections during ordering (N=%d)\n", NCMPA, N);
+        sTiles::Logger::errorf("[AMD] %d garbage collections during ordering (N=%d)", NCMPA, N);
 }
 
 } // namespace sTiles

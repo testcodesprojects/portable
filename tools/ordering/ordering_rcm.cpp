@@ -23,6 +23,7 @@ using namespace std;
 # include "ordering_utils.hpp"
 # include "../common/stiles_exporter.hpp"
 #include "../sort/stiles_sort_dispatch.hpp"
+#include "../common/stiles_logger.hpp"
 
 struct pair_hash {
     template <class T1, class T2>
@@ -130,13 +131,13 @@ int stiles_readRCMMatrix(const char* filename, int *order, int *nnz, int** STILE
 
     double tmp1 = 0.0, tmp2 = 0.0;
     if (fread(&tmp1, sizeof(double), 1, file) != 1) {
-        fprintf(stderr, "Error reading tmp1 from file.\n");
+        sTiles::Logger::errorf("Error reading tmp1 from file.");
         fclose(file);
         return 1;
     }
 
     if (fread(&tmp2, sizeof(double), 1, file) != 1) {
-        fprintf(stderr, "Error reading tmp2 from file.\n");
+        sTiles::Logger::errorf("Error reading tmp2 from file.");
         fclose(file);
         return 1;
     }
@@ -149,13 +150,13 @@ int stiles_readRCMMatrix(const char* filename, int *order, int *nnz, int** STILE
         rewind(file);  // Move file pointer back to the beginning
         int tmp1_int = 0, tmp2_int = 0;
         if (fread(&tmp1_int, sizeof(int), 1, file) != 1) {
-            fprintf(stderr, "Error reading tmp1_int from file.\n");
+            sTiles::Logger::errorf("Error reading tmp1_int from file.");
             fclose(file);
             return 1;
         }
 
         if (fread(&tmp2_int, sizeof(int), 1, file) != 1) {
-            fprintf(stderr, "Error reading tmp2_int from file.\n");
+            sTiles::Logger::errorf("Error reading tmp2_int from file.");
             fclose(file);
             return 1;
         }
@@ -166,7 +167,7 @@ int stiles_readRCMMatrix(const char* filename, int *order, int *nnz, int** STILE
 
     int *csr_p = (int *)malloc(((*order) + 1) * sizeof(int));
     if (!csr_p) {
-        fprintf(stderr, "Memory allocation failed for csr_p.\n");
+        sTiles::Logger::errorf("Memory allocation failed for csr_p.");
         fclose(file);
         return 1;
     }
@@ -174,28 +175,28 @@ int stiles_readRCMMatrix(const char* filename, int *order, int *nnz, int** STILE
     *STILES_CSR_I = (int *)malloc((*nnz) * sizeof(int));
     *STILES_CSR_X = (double *)malloc((*nnz) * sizeof(double));
     if (!*STILES_CSR_I || !*STILES_CSR_X) {
-        fprintf(stderr, "Memory allocation failed for CSR arrays.\n");
+        sTiles::Logger::errorf("Memory allocation failed for CSR arrays.");
         free(csr_p);
         fclose(file);
         return 1;
     }
 
     if (fread(*STILES_CSR_I, sizeof(int), (*nnz), file) != (*nnz)) {
-        fprintf(stderr, "Error reading STILES_CSR_I from file.\n");
+        sTiles::Logger::errorf("Error reading STILES_CSR_I from file.");
         free(csr_p);
         fclose(file);
         return 1;
     }
 
     if (fread(csr_p, sizeof(int), (*order) + 1, file) != ((*order) + 1)) {
-        fprintf(stderr, "Error reading csr_p from file.\n");
+        sTiles::Logger::errorf("Error reading csr_p from file.");
         free(csr_p);
         fclose(file);
         return 1;
     }
 
     if (fread(*STILES_CSR_X, sizeof(double), (*nnz), file) != (*nnz)) {
-        fprintf(stderr, "Error reading STILES_CSR_X from file.\n");
+        sTiles::Logger::errorf("Error reading STILES_CSR_X from file.");
         free(csr_p);
         fclose(file);
         return 1;
@@ -205,7 +206,7 @@ int stiles_readRCMMatrix(const char* filename, int *order, int *nnz, int** STILE
 
     *STILES_CSR_J = (int *)malloc((*nnz) * sizeof(int));
     if (!*STILES_CSR_J) {
-        fprintf(stderr, "Memory allocation failed for STILES_CSR_J.\n");
+        sTiles::Logger::errorf("Memory allocation failed for STILES_CSR_J.");
         free(csr_p);
         return 1;
     }
@@ -454,7 +455,7 @@ int e_symbolicFactorization(int* row_indices, int* col_indices, int NNZ, int til
                 tileMatrix[tileRow][tileCol] = 1; // Insert the tile
                 
             } else {
-                std::cerr << "Error: Not expecting column indices to be greater than row indices" << std::endl;
+                sTiles::Logger::error("Not expecting column indices to be greater than row indices");
                 exit(0);
             }
         }
@@ -466,7 +467,7 @@ int e_symbolicFactorization(int* row_indices, int* col_indices, int NNZ, int til
 
         *pa_indices = (int*)malloc((total_num_used_tiles+1) * sizeof(int));
         if (*pa_indices == nullptr) {
-            std::cerr << "Memory allocation for pa_indices failed." << std::endl;
+            sTiles::Logger::error("Memory allocation for pa_indices failed.");
             return -1;
         }
 
@@ -562,7 +563,7 @@ int e_symbolicFactorization(int* row_indices, int* col_indices, int NNZ, int til
 
         *pa_indices = (int*)malloc((total_num_used_tiles+1) * sizeof(int));
         if (*pa_indices == nullptr) {
-            std::cerr << "Memory allocation for pa_indices failed." << std::endl;
+            sTiles::Logger::error("Memory allocation for pa_indices failed.");
             return -1;
         }
 
@@ -954,7 +955,7 @@ int symbolicFactorization_e_trick(int** row_indices, int** col_indices, int NNZ,
                 tileMatrix[tileRow][tileCol] = 1; // Insert the tile
                 
             } else {
-                std::cerr << "Error: Not expecting column indices to be greater than row indices" << std::endl;
+                sTiles::Logger::error("Not expecting column indices to be greater than row indices");
                 exit(0);
             }
         }
@@ -968,7 +969,7 @@ int symbolicFactorization_e_trick(int** row_indices, int** col_indices, int NNZ,
 
         *pa_indices = (int*)malloc((total_num_used_tiles+1) * sizeof(int));
         if (*pa_indices == nullptr) {
-            std::cerr << "Memory allocation for pa_indices failed." << std::endl;
+            sTiles::Logger::error("Memory allocation for pa_indices failed.");
             exit(0);
         }
 
@@ -1417,12 +1418,12 @@ extern "C" int stiles_createSmartPermutation(int** row_indices, int** col_indice
         if (number_indices1[i] > threshold) {
             bin_p[i] = i; // Add to permutation vector
             counter++;
-            //fprintf(stderr, "[SmartPerm] dense node %d moved to end (degree=%d, threshold=%d)\n", i, number_indices1[i], threshold);
+            //sTiles::Logger::errorf("[SmartPerm] dense node %d moved to end (degree=%d, threshold=%d)", i, number_indices1[i], threshold);
         } else {
             bin_p[i] = -1; // Add to permutation vector
         }
     }
-    //fprintf(stderr, "[SmartPerm] total dense nodes moved to end: %d / %d\n", counter, dim);
+    //sTiles::Logger::errorf("[SmartPerm] total dense nodes moved to end: %d / %d", counter, dim);
 
     int counter1 = dim - counter;
     int counter2 = 0;
@@ -1447,7 +1448,7 @@ extern "C" int stiles_createSmartPermutation(int** row_indices, int** col_indice
   // Validate iperm before computing inverse permutation
   for(int i=0; i<dim; i++) {
     if (iperm[i] < 0 || iperm[i] >= dim) {
-      fprintf(stderr, "ERROR in stiles_createSmartPermutation: Invalid iperm[%d] = %d (dim = %d)\n", i, iperm[i], dim);
+      sTiles::Logger::errorf("ERROR in stiles_createSmartPermutation: Invalid iperm[%d] = %d (dim = %d)", i, iperm[i], dim);
       free(iperm);
       return -1;  // Return error
     }
@@ -1645,7 +1646,7 @@ int stiles_wrapRCM(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, 
 
 
         if (!newperm) {
-            fprintf(stderr, "Memory allocation failed for newperm.\n");
+            sTiles::Logger::errorf("Memory allocation failed for newperm.");
             free(save_rows);
             free(save_cols);
             free(pperm);

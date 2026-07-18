@@ -52,7 +52,7 @@ namespace tilecounter {
 Group: Inline helpers
 Purpose: Common predicates and utilities used by multiple counting paths.
 */
-static inline bool invalid_inputs(const int* r, const int* c, int nnz, int n, int tile) {
+static inline bool invalid_inputs(const int* r, const int* c, int64_t nnz, int n, int tile) {
     return (!r || !c || nnz <= 0 || n <= 0 || tile <= 0);
 }
 static inline int tiles_from_n(int n, int tile_size) {
@@ -203,7 +203,7 @@ inline const char* to_string(Method m) {
 }
 
 // Per-strategy counting (header-only)
-inline int count_char(const int* row_indices, const int* col_indices, int nnz, int n, int tile_size, State& st) {
+inline int count_char(const int* row_indices, const int* col_indices, int64_t nnz, int n, int tile_size, State& st) {
     const int num_tiles = tiles_from_n(n, tile_size);
     const std::size_t tri = static_cast<std::size_t>(num_tiles) * (num_tiles + 1ULL) / 2ULL;
     st.active_char.assign(tri, 0);
@@ -216,7 +216,7 @@ inline int count_char(const int* row_indices, const int* col_indices, int nnz, i
 #endif
     // non power-of-two handled by fast_div_tile_u32
     int count = 0;
-    for (int k = 0; k < nnz; ++k) {
+    for (int64_t k = 0; k < nnz; ++k) {
         const int r = row_indices[k], c = col_indices[k];
         if (out_of_range(r, n) || out_of_range(c, n)) continue;
         int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -231,7 +231,7 @@ inline int count_char(const int* row_indices, const int* col_indices, int nnz, i
 }
 
 // OpenMP variant: builds thread-local sets of u, then merges and materializes
-inline int count_char_omp(const int* row_indices, const int* col_indices, int nnz, int n, int tile_size, State& st, int num_cores) {
+inline int count_char_omp(const int* row_indices, const int* col_indices, int64_t nnz, int n, int tile_size, State& st, int num_cores) {
     const int num_tiles = tiles_from_n(n, tile_size);
     const std::size_t tri = static_cast<std::size_t>(num_tiles) * (num_tiles + 1ULL) / 2ULL;
     const std::size_t words = (tri + 63ULL) >> 6;
@@ -258,7 +258,7 @@ inline int count_char_omp(const int* row_indices, const int* col_indices, int nn
         const int tid = omp_get_thread_num();
         auto& B = locals[static_cast<std::size_t>(tid)];
         #pragma omp for schedule(static, chunk)
-        for (int k = 0; k < nnz; ++k) {
+        for (int64_t k = 0; k < nnz; ++k) {
             const int r = row_indices[k], c = col_indices[k];
             if (out_of_range(r, n) || out_of_range(c, n)) continue;
             int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -273,7 +273,7 @@ inline int count_char_omp(const int* row_indices, const int* col_indices, int nn
 #else
     (void)threads;
     auto& B = locals[0];
-    for (int k = 0; k < nnz; ++k) {
+    for (int64_t k = 0; k < nnz; ++k) {
         const int r = row_indices[k], c = col_indices[k];
         if (out_of_range(r, n) || out_of_range(c, n)) continue;
         int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -310,7 +310,7 @@ inline int count_char_omp(const int* row_indices, const int* col_indices, int nn
     return count;
 }
 
-inline int count_bool(const int* row_indices, const int* col_indices, int nnz, int n, int tile_size, State& st) {
+inline int count_bool(const int* row_indices, const int* col_indices, int64_t nnz, int n, int tile_size, State& st) {
     const int num_tiles = tiles_from_n(n, tile_size);
     const std::size_t tri = static_cast<std::size_t>(num_tiles) * (num_tiles + 1ULL) / 2ULL;
     st.active_bool.assign(tri, false);
@@ -322,7 +322,7 @@ inline int count_bool(const int* row_indices, const int* col_indices, int nnz, i
     unsigned shift = 0; if (pow2) { while ((1u << shift) != static_cast<unsigned>(tile_size)) ++shift; }
 #endif
     int count = 0;
-    for (int k = 0; k < nnz; ++k) {
+    for (int64_t k = 0; k < nnz; ++k) {
         const int r = row_indices[k], c = col_indices[k];
         if (out_of_range(r, n) || out_of_range(c, n)) continue;
         int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -336,7 +336,7 @@ inline int count_bool(const int* row_indices, const int* col_indices, int nnz, i
     return count;
 }
 
-inline int count_bool_omp(const int* row_indices, const int* col_indices, int nnz, int n, int tile_size, State& st, int num_cores) {
+inline int count_bool_omp(const int* row_indices, const int* col_indices, int64_t nnz, int n, int tile_size, State& st, int num_cores) {
     const int num_tiles = tiles_from_n(n, tile_size);
     const std::size_t tri = static_cast<std::size_t>(num_tiles) * (num_tiles + 1ULL) / 2ULL;
     const std::size_t words = (tri + 63ULL) >> 6;
@@ -364,7 +364,7 @@ inline int count_bool_omp(const int* row_indices, const int* col_indices, int nn
         const int tid = omp_get_thread_num();
         auto& B = locals[static_cast<std::size_t>(tid)];
         #pragma omp for schedule(static, chunk)
-        for (int k = 0; k < nnz; ++k) {
+        for (int64_t k = 0; k < nnz; ++k) {
             const int r = row_indices[k], c = col_indices[k];
             if (out_of_range(r, n) || out_of_range(c, n)) continue;
             int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -380,7 +380,7 @@ inline int count_bool_omp(const int* row_indices, const int* col_indices, int nn
 #else
     (void)threads;
     auto& B = locals[0];
-    for (int k = 0; k < nnz; ++k) {
+    for (int64_t k = 0; k < nnz; ++k) {
         const int r = row_indices[k], c = col_indices[k];
         if (out_of_range(r, n) || out_of_range(c, n)) continue;
         int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -428,7 +428,7 @@ inline int count_bool_omp(const int* row_indices, const int* col_indices, int nn
     return count;
 }
 
-inline int count_bitset(const int* row_indices, const int* col_indices, int nnz, int n, int tile_size, State& st) {
+inline int count_bitset(const int* row_indices, const int* col_indices, int64_t nnz, int n, int tile_size, State& st) {
     const int num_tiles = tiles_from_n(n, tile_size);
     const std::size_t tri = static_cast<std::size_t>(num_tiles) * (num_tiles + 1ULL) / 2ULL;
     const std::size_t W = 64;
@@ -441,7 +441,7 @@ inline int count_bitset(const int* row_indices, const int* col_indices, int nnz,
 #else
     unsigned shift = 0; if (pow2) { while ((1u << shift) != static_cast<unsigned>(tile_size)) ++shift; }
 #endif
-    for (int k = 0; k < nnz; ++k) {
+    for (int64_t k = 0; k < nnz; ++k) {
         const int r = row_indices[k], c = col_indices[k];
         if (out_of_range(r, n) || out_of_range(c, n)) continue;
         int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -470,7 +470,7 @@ inline int count_bitset(const int* row_indices, const int* col_indices, int nnz,
 }
 
 // OpenMP variant: thread-local bit-vectors, then OR-reduce
-inline int count_bitset_omp(const int* row_indices, const int* col_indices, int nnz, int n, int tile_size, State& st, int num_cores) {
+inline int count_bitset_omp(const int* row_indices, const int* col_indices, int64_t nnz, int n, int tile_size, State& st, int num_cores) {
     const int num_tiles = tiles_from_n(n, tile_size);
     const std::size_t tri = static_cast<std::size_t>(num_tiles) * (num_tiles + 1ULL) / 2ULL;
     const std::size_t W = 64;
@@ -498,7 +498,7 @@ inline int count_bitset_omp(const int* row_indices, const int* col_indices, int 
         const int tid = omp_get_thread_num();
         auto& B = locals[static_cast<std::size_t>(tid)];
         #pragma omp for schedule(static)
-        for (int k = 0; k < nnz; ++k) {
+        for (int64_t k = 0; k < nnz; ++k) {
             const int r = row_indices[k], c = col_indices[k];
             if (out_of_range(r, n) || out_of_range(c, n)) continue;
             int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -513,7 +513,7 @@ inline int count_bitset_omp(const int* row_indices, const int* col_indices, int 
     }
 #else
     (void)threads;
-    for (int k = 0; k < nnz; ++k) {
+    for (int64_t k = 0; k < nnz; ++k) {
         const int r = row_indices[k], c = col_indices[k];
         if (out_of_range(r, n) || out_of_range(c, n)) continue;
         int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -547,7 +547,7 @@ inline int count_bitset_omp(const int* row_indices, const int* col_indices, int 
     return count;
 }
 
-inline int count_tiled_chunks(const int* row_indices, const int* col_indices, int nnz, int n, int tile_size, State& st) {
+inline int count_tiled_chunks(const int* row_indices, const int* col_indices, int64_t nnz, int n, int tile_size, State& st) {
     const int num_tiles = tiles_from_n(n, tile_size);
     const int B = std::max(1, std::min(num_tiles, 8 * tile_size));
     const int Bdim = (num_tiles + B - 1) / B;
@@ -567,7 +567,7 @@ inline int count_tiled_chunks(const int* row_indices, const int* col_indices, in
 #else
     unsigned shift = 0; if (pow2) { while ((1u << shift) != static_cast<unsigned>(tile_size)) ++shift; }
 #endif
-    for (int k = 0; k < nnz; ++k) {
+    for (int64_t k = 0; k < nnz; ++k) {
         const int r = row_indices[k], c = col_indices[k];
         if (out_of_range(r, n) || out_of_range(c, n)) continue;
         int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -608,7 +608,7 @@ inline int count_tiled_chunks(const int* row_indices, const int* col_indices, in
 }
 
 // Parallel variant for tiled chunks: thread-local block maps then OR-merge and popcount
-inline int count_tiled_chunks_omp(const int* row_indices, const int* col_indices, int nnz, int n, int tile_size, State& st, int num_cores) {
+inline int count_tiled_chunks_omp(const int* row_indices, const int* col_indices, int64_t nnz, int n, int tile_size, State& st, int num_cores) {
     const int num_tiles = tiles_from_n(n, tile_size);
     const int B = std::max(1, std::min(num_tiles, 8 * tile_size));
     const int Bdim = (num_tiles + B - 1) / B;
@@ -643,7 +643,7 @@ inline int count_tiled_chunks_omp(const int* row_indices, const int* col_indices
         const int tid = omp_get_thread_num();
         auto& map = locals[static_cast<std::size_t>(tid)];
         #pragma omp for schedule(static)
-        for (int k = 0; k < nnz; ++k) {
+        for (int64_t k = 0; k < nnz; ++k) {
             const int r = row_indices[k], c = col_indices[k];
             if (out_of_range(r, n) || out_of_range(c, n)) continue;
             int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -664,7 +664,7 @@ inline int count_tiled_chunks_omp(const int* row_indices, const int* col_indices
 #else
     (void)num_cores;
     auto& map = locals[0];
-    for (int k = 0; k < nnz; ++k) {
+    for (int64_t k = 0; k < nnz; ++k) {
         const int r = row_indices[k], c = col_indices[k];
         if (out_of_range(r, n) || out_of_range(c, n)) continue;
         int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -720,7 +720,7 @@ inline int count_tiled_chunks_omp(const int* row_indices, const int* col_indices
     return count;
 }
 
-inline int count_hashset(const int* row_indices, const int* col_indices, int nnz, int n, int tile_size, State& st) {
+inline int count_hashset(const int* row_indices, const int* col_indices, int64_t nnz, int n, int tile_size, State& st) {
     const int num_tiles = tiles_from_n(n, tile_size);
     const auto off = make_upper_row_offsets(num_tiles);
     const bool pow2 = (tile_size & (tile_size - 1)) == 0;
@@ -731,7 +731,7 @@ inline int count_hashset(const int* row_indices, const int* col_indices, int nnz
 #endif
     st.S.clear();
     st.S.reserve(static_cast<std::size_t>(nnz));
-    for (int k = 0; k < nnz; ++k) {
+    for (int64_t k = 0; k < nnz; ++k) {
         const int r = row_indices[k], c = col_indices[k];
         if (out_of_range(r, n) || out_of_range(c, n)) continue;
         int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -745,7 +745,7 @@ inline int count_hashset(const int* row_indices, const int* col_indices, int nnz
 }
 
 // OpenMP variant: thread-local sets, then merge
-inline int count_hashset_omp(const int* row_indices, const int* col_indices, int nnz, int n, int tile_size, State& st, int num_cores) {
+inline int count_hashset_omp(const int* row_indices, const int* col_indices, int64_t nnz, int n, int tile_size, State& st, int num_cores) {
     const int num_tiles = tiles_from_n(n, tile_size);
     const auto off = make_upper_row_offsets(num_tiles);
     const bool pow2 = (tile_size & (tile_size - 1)) == 0;
@@ -764,7 +764,7 @@ inline int count_hashset_omp(const int* row_indices, const int* col_indices, int
         auto& S = locals[static_cast<std::size_t>(tid)];
         S.reserve(static_cast<std::size_t>(nnz / threads + 64));
         #pragma omp for schedule(static)
-        for (int k = 0; k < nnz; ++k) {
+        for (int64_t k = 0; k < nnz; ++k) {
             const int r = row_indices[k], c = col_indices[k];
             if (out_of_range(r, n) || out_of_range(c, n)) continue;
             int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -777,7 +777,7 @@ inline int count_hashset_omp(const int* row_indices, const int* col_indices, int
     }
 #else
     (void)num_cores;
-    for (int k = 0; k < nnz; ++k) {
+    for (int64_t k = 0; k < nnz; ++k) {
         const int r = row_indices[k], c = col_indices[k];
         if (out_of_range(r, n) || out_of_range(c, n)) continue;
         int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -795,7 +795,7 @@ inline int count_hashset_omp(const int* row_indices, const int* col_indices, int
     return static_cast<int>(st.S.size());
 }
 
-inline int count_sortunique(const int* row_indices, const int* col_indices, int nnz, int n, int tile_size, State& st) {
+inline int count_sortunique(const int* row_indices, const int* col_indices, int64_t nnz, int n, int tile_size, State& st) {
     const int num_tiles = tiles_from_n(n, tile_size);
     const auto off = make_upper_row_offsets(num_tiles);
     const bool pow2 = (tile_size & (tile_size - 1)) == 0;
@@ -805,7 +805,7 @@ inline int count_sortunique(const int* row_indices, const int* col_indices, int 
     unsigned shift = 0; if (pow2) { while ((1u << shift) != static_cast<unsigned>(tile_size)) ++shift; }
 #endif
     st.ids.clear(); st.ids.reserve(static_cast<std::size_t>(nnz));
-    for (int k = 0; k < nnz; ++k) {
+    for (int64_t k = 0; k < nnz; ++k) {
         const int r = row_indices[k], c = col_indices[k];
         if (out_of_range(r, n) || out_of_range(c, n)) continue;
         int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -821,7 +821,7 @@ inline int count_sortunique(const int* row_indices, const int* col_indices, int 
 }
 
 // OpenMP variant: thread-local vectors, then concatenate and unique
-inline int count_sortunique_omp(const int* row_indices, const int* col_indices, int nnz, int n, int tile_size, State& st, int num_cores) {
+inline int count_sortunique_omp(const int* row_indices, const int* col_indices, int64_t nnz, int n, int tile_size, State& st, int num_cores) {
     const int num_tiles = tiles_from_n(n, tile_size);
     const auto off = make_upper_row_offsets(num_tiles);
     const bool pow2 = (tile_size & (tile_size - 1)) == 0;
@@ -841,7 +841,7 @@ inline int count_sortunique_omp(const int* row_indices, const int* col_indices, 
         const int tid = omp_get_thread_num();
         auto& V = locals[static_cast<std::size_t>(tid)];
         #pragma omp for schedule(static)
-        for (int k = 0; k < nnz; ++k) {
+        for (int64_t k = 0; k < nnz; ++k) {
             const int r = row_indices[k], c = col_indices[k];
             if (out_of_range(r, n) || out_of_range(c, n)) continue;
             int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -854,7 +854,7 @@ inline int count_sortunique_omp(const int* row_indices, const int* col_indices, 
     }
 #else
     (void)num_cores;
-    for (int k = 0; k < nnz; ++k) {
+    for (int64_t k = 0; k < nnz; ++k) {
         const int r = row_indices[k], c = col_indices[k];
         if (out_of_range(r, n) || out_of_range(c, n)) continue;
         int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -875,7 +875,7 @@ inline int count_sortunique_omp(const int* row_indices, const int* col_indices, 
     return static_cast<int>(st.ids.size());
 }
 
-inline int count_paged(const int* row_indices, const int* col_indices, int nnz, int n, int tile_size, State& st) {
+inline int count_paged(const int* row_indices, const int* col_indices, int64_t nnz, int n, int tile_size, State& st) {
     const int num_tiles = tiles_from_n(n, tile_size);
     const auto off = make_upper_row_offsets(num_tiles);
     const bool pow2 = (tile_size & (tile_size - 1)) == 0;
@@ -902,7 +902,7 @@ inline int count_paged(const int* row_indices, const int* col_indices, int nnz, 
         if ((word & m) == 0ULL) { word |= m; ++cnt; }
     };
     int count = 0;
-    for (int k = 0; k < nnz; ++k) {
+    for (int64_t k = 0; k < nnz; ++k) {
         const int r = row_indices[k], c = col_indices[k];
         if (out_of_range(r, n) || out_of_range(c, n)) continue;
         int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -918,7 +918,7 @@ inline int count_paged(const int* row_indices, const int* col_indices, int nnz, 
 }
 
 // OpenMP variant: thread-local page maps, then merge OR into st.paged.pages
-inline int count_paged_omp(const int* row_indices, const int* col_indices, int nnz, int n, int tile_size, State& st, int num_cores) {
+inline int count_paged_omp(const int* row_indices, const int* col_indices, int64_t nnz, int n, int tile_size, State& st, int num_cores) {
     const int num_tiles = tiles_from_n(n, tile_size);
     const auto off = make_upper_row_offsets(num_tiles);
     const bool pow2 = (tile_size & (tile_size - 1)) == 0;
@@ -951,7 +951,7 @@ inline int count_paged_omp(const int* row_indices, const int* col_indices, int n
         const int tid = omp_get_thread_num();
         auto& P = locals[static_cast<std::size_t>(tid)];
         #pragma omp for schedule(static)
-        for (int k = 0; k < nnz; ++k) {
+        for (int64_t k = 0; k < nnz; ++k) {
             const int r = row_indices[k], c = col_indices[k];
             if (out_of_range(r, n) || out_of_range(c, n)) continue;
             int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -973,7 +973,7 @@ inline int count_paged_omp(const int* row_indices, const int* col_indices, int n
 #else
     (void)threads;
     auto& P = locals[0];
-    for (int k = 0; k < nnz; ++k) {
+    for (int64_t k = 0; k < nnz; ++k) {
         const int r = row_indices[k], c = col_indices[k];
         if (out_of_range(r, n) || out_of_range(c, n)) continue;
         int ti = pow2 ? static_cast<int>(static_cast<unsigned>(r) >> shift)
@@ -1021,7 +1021,7 @@ inline int count_paged_omp(const int* row_indices, const int* col_indices, int n
 // Dispatcher: header-only switch that calls per-strategy functions
 inline int countActiveTiles(const int* row_indices,
                             const int* col_indices,
-                            int nnz, int n, int tile_size,
+                            int64_t nnz, int n, int tile_size,
                             Method method,
                             State* state,
                             int num_cores,

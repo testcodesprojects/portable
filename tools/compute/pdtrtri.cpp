@@ -685,7 +685,7 @@ namespace sTiles{
                 return;
             }
 
-            const int num_tasks = tiledMatrix->e_trick_size_inv[rank];
+            const long long num_tasks = tiledMatrix->e_trick_size_inv[rank];
 
             auto tile_dims = [&](int dense_idx, int& h, int& w) {
                 if (tiledMatrix->tileMetaCore && dense_idx >= 0) {
@@ -699,10 +699,10 @@ namespace sTiles{
             };
 
             dep_init(num_tiles_per_dim, num_tiles_per_dim, 0);
-            int global_in = 0;
+            long long global_in = 0;
 
             // Phase 1: until routine 3 (barrier)
-            for (int in = 0; in < num_tasks; ++in) {
+            for (long long in = 0; in < num_tasks; ++in) {
                 int myroutine = tiledMatrix->e_trick_inv[rank][0 + 7*in];
                 int i = tiledMatrix->e_trick_inv[rank][1 + 7*in];
                 int j = tiledMatrix->e_trick_inv[rank][2 + 7*in];
@@ -752,7 +752,7 @@ namespace sTiles{
         exit_phase1_etrick_omp:
 
             // Phase 2: remaining tasks with dependency tracking
-            for (int in = global_in; in < num_tasks; ++in) {
+            for (long long in = global_in; in < num_tasks; ++in) {
                 int myroutine = tiledMatrix->e_trick_inv[rank][0 + 7*in];
                 int i = tiledMatrix->e_trick_inv[rank][1 + 7*in];
                 int j = tiledMatrix->e_trick_inv[rank][2 + 7*in];
@@ -865,7 +865,7 @@ namespace sTiles{
             if (!inv && tiledMatrix->chunkedInverseTiles) inv = tiledMatrix->chunkedInverseTiles[0];
 
             if (!L || !inv) {
-                std::fprintf(stderr, "sTiles error: %s (variant 1) - L or inv is null! L=%s inv=%s\n",
+                sTiles::Logger::errorf("%s (variant 1) - L or inv is null! L=%s inv=%s",
                              who, L ? "valid" : "NULL", inv ? "valid" : "NULL");
                 return -1;
             }
@@ -888,7 +888,7 @@ namespace sTiles{
 
             const lapack_int info = LAPACKE_dtrtri(LAPACK_COL_MAJOR, 'U', 'N', N, inv, N);
             if (info != 0) {
-                std::fprintf(stderr, "sTiles error: %s LAPACKE_dtrtri failed with info=%d.\n",
+                sTiles::Logger::errorf("%s LAPACKE_dtrtri failed with info=%d.",
                              who, static_cast<int>(info));
                 return static_cast<int>(info);
             }
@@ -976,7 +976,7 @@ namespace sTiles{
                                         static_cast<size_t>(jj + 1) * sizeof(double));
                         const lapack_int info1 = LAPACKE_dtrtri(LAPACK_COL_MAJOR, 'U', 'N', w, inv, h);
                         if (info1 != 0) {
-                            std::fprintf(stderr, "sTiles error: pthreads_dpotri_dense_serial LAPACKE_dtrtri failed info=%d (tile idx=%d).\n",
+                            sTiles::Logger::errorf("pthreads_dpotri_dense_serial LAPACKE_dtrtri failed info=%d (tile idx=%d).",
                                          static_cast<int>(info1), index1);
                             stile->ss_abort = 1;
                             return;
@@ -1101,7 +1101,7 @@ namespace sTiles{
                                         static_cast<size_t>(jj + 1) * sizeof(double));
                         const lapack_int info1 = LAPACKE_dtrtri(LAPACK_COL_MAJOR, 'U', 'N', w, inv, h);
                         if (info1 != 0) {
-                            std::fprintf(stderr, "sTiles error: omp_dpotri_dense_serial LAPACKE_dtrtri failed info=%d (tile idx=%d).\n",
+                            sTiles::Logger::errorf("omp_dpotri_dense_serial LAPACKE_dtrtri failed info=%d (tile idx=%d).",
                                          static_cast<int>(info1), index1);
                             dep_tracker->abort_flag.store(true, std::memory_order_release);
                             return;
@@ -1250,7 +1250,7 @@ namespace sTiles{
             // }
 
             in_init(num_tiles_per_dim, num_tiles_per_dim, 0);
-            int global_in = -1;
+            long long global_in = -1;
 
             // Phase 1: until routine 3 (barrier)
             for (size_t in = start; in < end; ++in) {
@@ -1288,7 +1288,7 @@ namespace sTiles{
                         {
                             const lapack_int info1 = LAPACKE_dtrtri(LAPACK_COL_MAJOR, 'U', 'N', w, inv, h);
                             if (info1 != 0) {
-                                std::fprintf(stderr, "sTiles error: pthreads_dpotri_dense_parallel LAPACKE_dtrtri failed info=%d (tile idx=%d).\n",
+                                sTiles::Logger::errorf("pthreads_dpotri_dense_parallel LAPACKE_dtrtri failed info=%d (tile idx=%d).",
                                             static_cast<int>(info1), index1);
                                 stile->ss_abort = 1;   // surfaced as ExecutionFailed by pthreads_dpotri
                             }
@@ -1348,7 +1348,7 @@ namespace sTiles{
                         //     }
                         // }
                         sTiles::Control::Barrier(stile);
-                        global_in = static_cast<int>(in) + 1;
+                        global_in = static_cast<long long>(in) + 1;
                         goto exit_phase1_dense;
                     }
                     default:
@@ -1597,7 +1597,7 @@ namespace sTiles{
             };
 
             dep_init(num_tiles_per_dim, num_tiles_per_dim, 0);
-            int global_in = -1;
+            long long global_in = -1;
 
             // Phase 1: until routine 3 (barrier)
             for (size_t in = start; in < end; ++in) {
@@ -1621,7 +1621,7 @@ namespace sTiles{
                                             static_cast<size_t>(jj + 1) * sizeof(double));
                             const lapack_int info1 = LAPACKE_dtrtri(LAPACK_COL_MAJOR, 'U', 'N', w, inv, h);
                             if (info1 != 0) {
-                                std::fprintf(stderr, "sTiles error: omp_dpotri_dense_parallel LAPACKE_dtrtri failed info=%d (tile idx=%d).\n",
+                                sTiles::Logger::errorf("omp_dpotri_dense_parallel LAPACKE_dtrtri failed info=%d (tile idx=%d).",
                                             static_cast<int>(info1), index1);
                                 dep_tracker->abort_flag.store(true, std::memory_order_release);  // -> ExecutionFailed
                             }
@@ -1646,7 +1646,7 @@ namespace sTiles{
                     case 3: // Barrier point
                     {
                         #pragma omp barrier
-                        global_in = static_cast<int>(in) + 1;
+                        global_in = static_cast<long long>(in) + 1;
                         goto exit_phase1_dense_omp;
                     }
                     default:
@@ -1780,7 +1780,7 @@ namespace sTiles{
             }
 
             in_init(num_tiles_per_dim, num_tiles_per_dim, 0);
-            int global_in = -1;
+            long long global_in = -1;
 
             // ========== Phase 1: Compute L^{-1} for diagonal tiles, then L^{-1} * L_offdiag ==========
             for (size_t in = start; in < end; ++in) {
@@ -1842,7 +1842,7 @@ namespace sTiles{
                     case 3: // Barrier
                     {
                         sTiles::Control::Barrier(stile);
-                        global_in = static_cast<int>(in) + 1;
+                        global_in = static_cast<long long>(in) + 1;
                         goto exit_phase1_semisparse;
                     }
                     default:
@@ -2059,7 +2059,7 @@ namespace sTiles{
             }
 
             dep_init(num_tiles_per_dim, num_tiles_per_dim, 0);
-            int global_in = -1;
+            long long global_in = -1;
 
             // ========== Phase 1: Compute L^{-1} for diagonal tiles, then L^{-1} * L_offdiag ==========
             for (size_t in = start; in < end; ++in) {
@@ -2121,7 +2121,7 @@ namespace sTiles{
                     case 3: // Barrier
                     {
                         #pragma omp barrier
-                        global_in = static_cast<int>(in) + 1;
+                        global_in = static_cast<long long>(in) + 1;
                         goto exit_phase1_semi_dense_omp;
                     }
                     default:
@@ -2388,7 +2388,7 @@ namespace sTiles{
                         const int kd = semi.upper_bw;
 
                         if (const int bad = semi_diag_singular(n, kd, fact)) {
-                            std::fprintf(stderr, "sTiles error: semi selinv singular diagonal tile idx=%d (local row %d).\n", index1, bad - 1);
+                            sTiles::Logger::errorf("semi selinv singular diagonal tile idx=%d (local row %d).", index1, bad - 1);
                             stile->ss_abort = 1;   // -> ExecutionFailed (dpotri.cpp); break (not return) avoids the phase-1 barrier deadlock
                             break;
                         }
@@ -2810,7 +2810,7 @@ namespace sTiles{
             }
 
             in_init(num_tiles_per_dim, num_tiles_per_dim, 0);
-            int global_in = -1;
+            long long global_in = -1;
 
             constexpr int FUSE_THRESH = 8;
 
@@ -2834,7 +2834,7 @@ namespace sTiles{
                         const int kd = semi.upper_bw;
 
                         if (const int bad = semi_diag_singular(n, kd, fact)) {
-                            std::fprintf(stderr, "sTiles error: semi selinv singular diagonal tile idx=%d (local row %d).\n", index1, bad - 1);
+                            sTiles::Logger::errorf("semi selinv singular diagonal tile idx=%d (local row %d).", index1, bad - 1);
                             stile->ss_abort = 1;   // -> ExecutionFailed (dpotri.cpp); break (not return) avoids the phase-1 barrier deadlock
                             break;
                         }
@@ -2884,7 +2884,7 @@ namespace sTiles{
                     case 3: // Barrier
                     {
                         sTiles::Control::Barrier(stile);
-                        global_in = static_cast<int>(in) + 1;
+                        global_in = static_cast<long long>(in) + 1;
                         goto exit_phase1_semisparse_selinv;
                     }
                     default:
@@ -3368,7 +3368,7 @@ namespace sTiles{
                 const char* e = std::getenv("STILES_BCACHE_STATS"); return e && e[0] == '1';
             }();
             if (bcache_stats)
-                std::fprintf(stderr, "[bcache] pthreads rank %d hits=%ld misses=%ld\n",
+                sTiles::Logger::errorf("[bcache] pthreads rank %d hits=%ld misses=%ld",
                              rank, B_cache_hits, B_cache_misses);
 
             in_finalize();
@@ -3453,7 +3453,7 @@ namespace sTiles{
                         const int kd = semi.upper_bw;
 
                         if (const int bad = semi_diag_singular(n, kd, fact)) {
-                            std::fprintf(stderr, "sTiles error: semi selinv singular diagonal tile idx=%d (local row %d).\n", index1, bad - 1);
+                            sTiles::Logger::errorf("semi selinv singular diagonal tile idx=%d (local row %d).", index1, bad - 1);
                             dep_tracker->abort_flag.store(true, std::memory_order_release);   // -> ExecutionFailed; break (not return) avoids the phase-1 barrier deadlock
                             break;
                         }
@@ -3875,7 +3875,7 @@ namespace sTiles{
             }
 
             dep_init(num_tiles_per_dim, num_tiles_per_dim, 0);
-            int global_in = -1;
+            long long global_in = -1;
 
             constexpr int FUSE_THRESH = 8;
 
@@ -3899,7 +3899,7 @@ namespace sTiles{
                         const int kd = semi.upper_bw;
 
                         if (const int bad = semi_diag_singular(n, kd, fact)) {
-                            std::fprintf(stderr, "sTiles error: semi selinv singular diagonal tile idx=%d (local row %d).\n", index1, bad - 1);
+                            sTiles::Logger::errorf("semi selinv singular diagonal tile idx=%d (local row %d).", index1, bad - 1);
                             dep_tracker->abort_flag.store(true, std::memory_order_release);   // -> ExecutionFailed; break (not return) avoids the phase-1 barrier deadlock
                             break;
                         }
@@ -3949,7 +3949,7 @@ namespace sTiles{
                     case 3: // Barrier
                     {
                         #pragma omp barrier
-                        global_in = static_cast<int>(in) + 1;
+                        global_in = static_cast<long long>(in) + 1;
                         goto exit_phase1_semisparse_selinv;
                     }
                     default:
@@ -4428,7 +4428,7 @@ namespace sTiles{
                 const char* e = std::getenv("STILES_BCACHE_STATS"); return e && e[0] == '1';
             }();
             if (bcache_stats)
-                std::fprintf(stderr, "[bcache] omp rank %d hits=%ld misses=%ld\n",
+                sTiles::Logger::errorf("[bcache] omp rank %d hits=%ld misses=%ld",
                              rank, B_cache_hits, B_cache_misses);
 
             dep_finalize();
@@ -4456,11 +4456,11 @@ void omp_pdtrtri(TiledMatrix* tiledMatrix, omp_dep_tracker_t* dep_tracker, int w
 
     if (!tiledMatrix) {
         #pragma omp single
-        std::cout << "Error: null tiledMatrix in omp_pdtrtri" << std::endl;
+        sTiles::Logger::error("null tiledMatrix in omp_pdtrtri");
         return;
     }
 
-    const int tile_type_mode = stiles_control_params[3];
+    const int tile_type_mode = stiles_scheme_tile_mode(tiledMatrix);
     const int variant = tiledMatrix->factorization_variant;
     const int num_active = tiledMatrix->numActiveTiles;
     const int dim_tiled = tiledMatrix->dimTiledMatrix;
@@ -4484,7 +4484,7 @@ void omp_pdtrtri(TiledMatrix* tiledMatrix, omp_dep_tracker_t* dep_tracker, int w
     // Dispatch based on tile type
     if (tile_type_mode == 0) {
         // Dense mode - serial worker when a single core is used (params[14]==0).
-        if (worldsize == 1 && stiles_control_params[14] == 0) {
+        if (worldsize == 1 && stiles_control_params[sTiles::param::SerialMode] == 0) {
             #pragma omp single
             omp_dpotri_dense_serial(tiledMatrix, dep_tracker);
         } else {
@@ -4495,7 +4495,7 @@ void omp_pdtrtri(TiledMatrix* tiledMatrix, omp_dep_tracker_t* dep_tracker, int w
         if (tiledMatrix->chunkedDenseTiles && tiledMatrix->semisparseTileMetaCore) {
             // Selective inverse (params[7]==1): serial/parallel split mirrors the
             // pthreads dispatcher (num_cores<=1 -> serial worker).
-            if (stiles_control_params[7] == 1) {
+            if (stiles_control_params[sTiles::param::InverseStorageMode] == 1) {
                 if (worldsize == 1) {
                     #pragma omp single
                     omp_dpotri_semi_sparse_serial(tiledMatrix, dep_tracker);
@@ -4511,8 +4511,8 @@ void omp_pdtrtri(TiledMatrix* tiledMatrix, omp_dep_tracker_t* dep_tracker, int w
         }
     } else {
         #pragma omp single
-        std::cout << "OMP inversion not implemented for tile_type=" << tile_type_mode
-                  << ". Only dense (0) and semisparse (1) modes are supported." << std::endl;
+        sTiles::Logger::error("OMP inversion not implemented for tile_type=", tile_type_mode,
+                  ". Only dense (0) and semisparse (1) modes are supported.");
     }
 }
 
@@ -4524,7 +4524,7 @@ void stiles_pdtrtri(stiles_context_t *stile) {
     sTiles::unpack_args(stile, tiledMatrix);
 
     static int* stiles_control_params = sTiles_get_params();
-    const int tile_type_mode = stiles_control_params[3];
+    const int tile_type_mode = stiles_scheme_tile_mode(tiledMatrix);
 
     // Get factorization variant from scheme
     const int variant = tiledMatrix->factorization_variant;
@@ -4569,7 +4569,7 @@ void stiles_pdtrtri(stiles_context_t *stile) {
             // Check inverse storage mode: params[7]
             //   0 = dense inverse tiles (default)
             //   1 = semisparse inverse tiles (selective inverse elements only)
-            const int inverse_storage_mode = stiles_control_params[7];
+            const int inverse_storage_mode = stiles_control_params[sTiles::param::InverseStorageMode];
 
             if (inverse_storage_mode == 1) {
                 // Semisparse selective inverse: store only elements at original sparsity positions
@@ -4584,7 +4584,7 @@ void stiles_pdtrtri(stiles_context_t *stile) {
                 // params[14] guard the 1-core "parallel" harness cells silently
                 // ran the serial executor, so the parallel selective path was
                 // never exercised at 1 core.
-                if (tiledMatrix->num_cores <= 1 && stiles_control_params[14] == 0) {
+                if (tiledMatrix->num_cores <= 1 && stiles_control_params[sTiles::param::SerialMode] == 0) {
                     //sTiles::Process::pdtrtri_semi_sparse_inv(tiledMatrix, stile);
                     //sTiles::Process::pdtrtri_semi_sparse_inv_imp1_serial(tiledMatrix, stile);
                     sTiles::Process::pthreads_dpotri_semi_sparse_serial(tiledMatrix, stile);
@@ -4629,7 +4629,7 @@ void stiles_pdtrtri(stiles_context_t *stile) {
         // }
         // Serial worker when a single core is used (params[14]==0), mirroring
         // the chol-side expansion_dense serial/parallel split.
-        if (STILES_SIZE == 1 && stiles_control_params[14] == 0) {
+        if (STILES_SIZE == 1 && stiles_control_params[sTiles::param::SerialMode] == 0) {
             sTiles::Process::pthreads_dpotri_dense_serial(tiledMatrix, stile);
         } else {
             sTiles::Process::pthreads_dpotri_dense_parallel(tiledMatrix, stile);

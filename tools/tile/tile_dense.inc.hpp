@@ -132,7 +132,7 @@
     inline StatusCode build_dense_tile_lookup(sTiles_call **call_info, TiledMatrix *scheme, int group_index, int num_cores) {
         // Check tile type mode
         int* params = sTiles_get_params();
-        const int tile_type_mode = params[3];
+        const int tile_type_mode = params[sTiles::param::TileTypeMode];
 
         // Only proceed if tile_type_mode is 0 (dense only) or 3 (dense + semisparse)
         if (tile_type_mode != 0 && tile_type_mode != 3) {
@@ -148,7 +148,7 @@
             return StatusCode::Success;
         }
         if (fact_variant > 3) {
-            std::fprintf(stderr, "ERROR: Unsupported factorization_variant %d\n", fact_variant);
+            sTiles::Logger::errorf("Unsupported factorization_variant %d", fact_variant);
             exit(0);
             return StatusCode::InvalidArgument;
         }
@@ -160,7 +160,7 @@
 
         scheme->tileMetaCore = TileMemoryManager::allocate<TileMetaCore>(num_active, group_index);
         if (!scheme->tileMetaCore) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for denseTiles or tileMetaCore.\n");
+            sTiles::Logger::errorf("Memory allocation failed for denseTiles or tileMetaCore.");
             return StatusCode::OutOfResources;
         }
 
@@ -178,7 +178,7 @@
         const int num_active = scheme->numActiveTiles;
 
         if (num_active != 1) {
-            std::fprintf(stderr, "ERROR: build_dense_tile_lookup_variant1 expects numActiveTiles=1, got %d\n", num_active);
+            sTiles::Logger::errorf("build_dense_tile_lookup_variant1 expects numActiveTiles=1, got %d", num_active);
             return StatusCode::InvalidArgument;
         }
 
@@ -188,7 +188,7 @@
         scheme->diagonal_bmapper = TileMemoryManager::allocateZero<bool>(num_active, group_index);
 
         if (!scheme->tile_index_lookup || !scheme->element_offset_lookup || !scheme->diagonal_bmapper) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for lookup tables in variant1\n");
+            sTiles::Logger::errorf("Memory allocation failed for lookup tables in variant1");
             return StatusCode::OutOfResources;
         }
 
@@ -198,7 +198,7 @@
         // Allocate and set tileMetaCore
         scheme->tileMetaCore = TileMemoryManager::allocate<TileMetaCore>(num_active, group_index);
         if (!scheme->tileMetaCore) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for tileMetaCore in variant1\n");
+            sTiles::Logger::errorf("Memory allocation failed for tileMetaCore in variant1");
             return StatusCode::OutOfResources;
         }
 
@@ -217,7 +217,7 @@
 
             // Ensure upper triangular (row <= col)
             if (row > col) {
-                std::fprintf(stderr, "ERROR: variant1 encountered lower-triangular entry (row=%d, col=%d)\n", row, col);
+                sTiles::Logger::errorf("variant1 encountered lower-triangular entry (row=%d, col=%d)", row, col);
                 return StatusCode::InvalidArgument;
             }
 
@@ -242,7 +242,7 @@
 
         const int expected_active = (num_tiles * (num_tiles + 1)) / 2;
         if (num_active != expected_active) {
-            std::fprintf(stderr, "ERROR: build_dense_tile_lookup_variant2 expects numActiveTiles=%d, got %d\n",
+            sTiles::Logger::errorf("build_dense_tile_lookup_variant2 expects numActiveTiles=%d, got %d",
                          expected_active, num_active);
             return StatusCode::InvalidArgument;
         }
@@ -253,14 +253,14 @@
         scheme->diagonal_bmapper = TileMemoryManager::allocateZero<bool>(num_active, group_index);
 
         if (!scheme->tile_index_lookup || !scheme->element_offset_lookup || !scheme->diagonal_bmapper) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for lookup tables in variant2\n");
+            sTiles::Logger::errorf("Memory allocation failed for lookup tables in variant2");
             return StatusCode::OutOfResources;
         }
 
         // Allocate and set tileMetaCore
         scheme->tileMetaCore = TileMemoryManager::allocate<TileMetaCore>(num_active, group_index);
         if (!scheme->tileMetaCore) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for tileMetaCore in variant2\n");
+            sTiles::Logger::errorf("Memory allocation failed for tileMetaCore in variant2");
             return StatusCode::OutOfResources;
         }
 
@@ -300,7 +300,7 @@
 
             // Ensure upper triangular (tileRow <= tileCol)
             if (tileRow > tileCol) {
-                std::fprintf(stderr, "ERROR: variant2 encountered lower-triangular entry (row=%d, col=%d, tileRow=%d, tileCol=%d)\n",
+                sTiles::Logger::errorf("variant2 encountered lower-triangular entry (row=%d, col=%d, tileRow=%d, tileCol=%d)",
                              row, col, tileRow, tileCol);
                 return StatusCode::InvalidArgument;
             }
@@ -309,7 +309,7 @@
             const int dense_idx = tileRow * num_tiles - (tileRow * (tileRow - 1)) / 2 + (tileCol - tileRow);
 
             if (dense_idx < 0 || dense_idx >= num_active) {
-                std::fprintf(stderr, "ERROR: variant2 computed invalid tile index %d (numActive=%d)\n",
+                sTiles::Logger::errorf("variant2 computed invalid tile index %d (numActive=%d)",
                              dense_idx, num_active);
                 return StatusCode::InvalidArgument;
             }
@@ -346,8 +346,8 @@
 
         // Get pruning mode from control parameters
         int* params = sTiles_get_params();
-        const int pruning_mode = params[0];
-        const int tile_type_mode = params[3];
+        const int pruning_mode = params[sTiles::param::SemisparsePruningMode];
+        const int tile_type_mode = params[sTiles::param::TileTypeMode];
 
         // Check if we should skip allocation based on semisparse metadata
         // BUT: never skip diagonal tiles (they always have all columns active)
@@ -375,7 +375,7 @@
         // Dense (factor) tile
         scheme->denseTiles[idx] = TileMemoryManager::allocate<double>(elems, group_index);
         if (!scheme->denseTiles[idx]) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for denseTiles[%d].\n", idx);
+            sTiles::Logger::errorf("Memory allocation failed for denseTiles[%d].", idx);
             return StatusCode::OutOfResources;
         }
 
@@ -383,7 +383,7 @@
             // Inverse tile
             scheme->inverseTiles[idx] = TileMemoryManager::allocate<double>(elems, group_index);
             if (!scheme->inverseTiles[idx]) {
-                std::fprintf(stderr, "ERROR: Memory allocation failed for inverseTiles[%d].\n", idx);
+                sTiles::Logger::errorf("Memory allocation failed for inverseTiles[%d].", idx);
                 // Clean up already allocated denseTiles[idx]
                 TileMemoryManager::deallocate(scheme->denseTiles[idx]);
                 scheme->denseTiles[idx] = nullptr;
@@ -395,7 +395,7 @@
             // Saved tile
             scheme->savedTiles[idx] = TileMemoryManager::allocate<double>(elems, group_index);
             if (!scheme->savedTiles[idx]) {
-                std::fprintf(stderr, "ERROR: Memory allocation failed for savedTiles[%d].\n", idx);
+                sTiles::Logger::errorf("Memory allocation failed for savedTiles[%d].", idx);
                 // Clean up already allocated buffers
                 TileMemoryManager::deallocate(scheme->inverseTiles[idx]);
                 scheme->inverseTiles[idx] = nullptr;
@@ -506,13 +506,13 @@
 
             const int final_code = error_code.load(std::memory_order_relaxed);
             if (final_code != 0) {
-                std::fprintf(stderr, "ERROR: Parallel tile allocation failed with code %d. Exiting.\n", final_code);
+                sTiles::Logger::errorf("Parallel tile allocation failed with code %d. Exiting.", final_code);
                 std::exit(EXIT_FAILURE);
             }
 
             const StatusCode init_status = init_inverse_identity_on_diagonals(scheme);
             if (init_status != StatusCode::Success) {
-                std::fprintf(stderr, "ERROR: Failed to initialize inverse diagonals (parallel path). Exiting.\n");
+                sTiles::Logger::errorf("Failed to initialize inverse diagonals (parallel path). Exiting.");
                 std::exit(EXIT_FAILURE);
             }
             return;
@@ -524,14 +524,14 @@
         for (int idx = 0; idx < scheme->numActiveTiles; ++idx) {
             const StatusCode sc = allocate_buffers_for_tile(scheme, idx, group_index);
             if (sc != StatusCode::Success) {
-                std::fprintf(stderr, "ERROR: Tile allocation failed at index %d. Exiting.\n", idx);
+                sTiles::Logger::errorf("Tile allocation failed at index %d. Exiting.", idx);
                 std::exit(EXIT_FAILURE);
             }
         }
 
         const StatusCode init_status = init_inverse_identity_on_diagonals(scheme);
         if (init_status != StatusCode::Success) {
-            std::fprintf(stderr, "ERROR: Failed to initialize inverse diagonals (serial path). Exiting.\n");
+            sTiles::Logger::errorf("Failed to initialize inverse diagonals (serial path). Exiting.");
             std::exit(EXIT_FAILURE);
         }
     }
@@ -539,8 +539,8 @@
     inline StatusCode allocate_dense_tiles(TiledMatrix *scheme, int group_index, int num_cores = 1) {
         // Check tile type mode
         int* params = sTiles_get_params();
-        const int tile_type_mode = params[3];
-        const int tile_corr_mode = params[0];
+        const int tile_type_mode = params[sTiles::param::TileTypeMode];
+        const int tile_corr_mode = params[sTiles::param::SemisparsePruningMode];
         const int num_active = scheme->numActiveTiles;
 
         if (tile_type_mode == 0 && tile_corr_mode > 0) {
@@ -578,7 +578,7 @@
 
         scheme->denseTiles = TileMemoryManager::allocate<DenseTile>(num_active, group_index);
         if (!scheme->denseTiles || !scheme->tileMetaCore) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for denseTiles or tileMetaCore.\n");
+            sTiles::Logger::errorf("Memory allocation failed for denseTiles or tileMetaCore.");
             // Clean up denseTiles if it was allocated
             if (scheme->denseTiles) {
                 TileMemoryManager::deallocate(scheme->denseTiles);
@@ -591,7 +591,7 @@
             scheme->inverseTiles = TileMemoryManager::allocate<DenseTile>(num_active, group_index);
             scheme->savedTiles = TileMemoryManager::allocate<DenseTile>(num_active, group_index);
             if (!scheme->inverseTiles || !scheme->savedTiles) {
-                std::fprintf(stderr, "ERROR: Memory allocation failed for inverseTiles or savedTiles.\n");
+                sTiles::Logger::errorf("Memory allocation failed for inverseTiles or savedTiles.");
                 // Clean up allocated arrays
                 if (scheme->savedTiles) {
                     TileMemoryManager::deallocate(scheme->savedTiles);
@@ -629,7 +629,7 @@
         // Allocate single dense tile for the entire matrix
         scheme->denseTiles = TileMemoryManager::allocate<DenseTile>(1, group_index);
         if (!scheme->denseTiles) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for variant 1 dense tile.\n");
+            sTiles::Logger::errorf("Memory allocation failed for variant 1 dense tile.");
             return StatusCode::OutOfResources;
         }
 
@@ -637,7 +637,7 @@
             scheme->inverseTiles = TileMemoryManager::allocate<DenseTile>(1, group_index);
             scheme->savedTiles = TileMemoryManager::allocate<DenseTile>(1, group_index);
             if (!scheme->inverseTiles || !scheme->savedTiles) {
-                std::fprintf(stderr, "ERROR: Memory allocation failed for variant 1 inverse tiles.\n");
+                sTiles::Logger::errorf("Memory allocation failed for variant 1 inverse tiles.");
                 if (scheme->savedTiles) {
                     TileMemoryManager::deallocate(scheme->savedTiles);
                     scheme->savedTiles = nullptr;
@@ -658,14 +658,14 @@
         // Allocate buffers for the single tile
         const StatusCode sc = allocate_buffers_for_tile(scheme, 0, group_index);
         if (sc != StatusCode::Success) {
-            std::fprintf(stderr, "ERROR: Buffer allocation failed for variant 1 tile.\n");
+            sTiles::Logger::errorf("Buffer allocation failed for variant 1 tile.");
             return sc;
         }
 
         // Initialize inverse tile to identity
         const StatusCode init_status = init_inverse_identity_on_diagonals_variant1(scheme);
         if (init_status != StatusCode::Success) {
-            std::fprintf(stderr, "ERROR: Failed to initialize inverse diagonal (variant 1).\n");
+            sTiles::Logger::errorf("Failed to initialize inverse diagonal (variant 1).");
             return init_status;
         }
 
@@ -687,7 +687,7 @@
         // Allocate upper triangular tiles
         scheme->denseTiles = TileMemoryManager::allocate<DenseTile>(num_active, group_index);
         if (!scheme->denseTiles) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for variant 2 dense tiles.\n");
+            sTiles::Logger::errorf("Memory allocation failed for variant 2 dense tiles.");
             return StatusCode::OutOfResources;
         }
 
@@ -695,7 +695,7 @@
             scheme->inverseTiles = TileMemoryManager::allocate<DenseTile>(num_active, group_index);
             scheme->savedTiles = TileMemoryManager::allocate<DenseTile>(num_active, group_index);
             if (!scheme->inverseTiles || !scheme->savedTiles) {
-                std::fprintf(stderr, "ERROR: Memory allocation failed for variant 2 inverse tiles.\n");
+                sTiles::Logger::errorf("Memory allocation failed for variant 2 inverse tiles.");
                 if (scheme->savedTiles) {
                     TileMemoryManager::deallocate(scheme->savedTiles);
                     scheme->savedTiles = nullptr;
@@ -717,7 +717,7 @@
         for (int idx = 0; idx < num_active; ++idx) {
             const StatusCode sc = allocate_buffers_for_tile(scheme, idx, group_index);
             if (sc != StatusCode::Success) {
-                std::fprintf(stderr, "ERROR: Buffer allocation failed for variant 2 tile %d.\n", idx);
+                sTiles::Logger::errorf("Buffer allocation failed for variant 2 tile %d.", idx);
                 return sc;
             }
         }
@@ -725,7 +725,7 @@
         // Initialize inverse diagonal tiles to identity
         const StatusCode init_status = init_inverse_identity_on_diagonals_variant2(scheme);
         if (init_status != StatusCode::Success) {
-            std::fprintf(stderr, "ERROR: Failed to initialize inverse diagonals (variant 2).\n");
+            sTiles::Logger::errorf("Failed to initialize inverse diagonals (variant 2).");
             return init_status;
         }
 

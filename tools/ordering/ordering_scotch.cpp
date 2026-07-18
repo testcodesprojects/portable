@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <mutex>
 #include "../sort/stiles_sort_dispatch.hpp"
+#include "../common/stiles_logger.hpp"
 
 extern "C" int stiles_createSmartPermutation(int** row_indices, int** col_indices, int nnz, int node_num, int** perm);
 
@@ -76,8 +77,7 @@ static bool build_perm_from_iperm(int* perm, const int* iperm, int N) {
     for (int i = 0; i < N; ++i) {
         const int j = iperm[i];
         if (j < 0 || j >= N) {
-            std::fprintf(stderr,
-                "build_perm_from_iperm: iperm[%d]=%d out of range [0,%d) — rejecting ordering\n",
+            sTiles::Logger::errorf("build_perm_from_iperm: iperm[%d]=%d out of range [0,%d) — rejecting ordering",
                 i, j, N);
             return false;
         }
@@ -143,7 +143,7 @@ static int runSCOTCH_impl(int** csr_i, int** csr_j, int N, int nnz, int m,
 
     const int dim = N - m;
     if (dim <= 0) {
-        std::fprintf(stderr, "runSCOTCH: dim = N - m <= 0 (N = %d, m = %d)\n", N, m);
+        sTiles::Logger::errorf("runSCOTCH: dim = N - m <= 0 (N = %d, m = %d)", N, m);
         return 1;
     }
 
@@ -167,7 +167,7 @@ static int runSCOTCH_impl(int** csr_i, int** csr_j, int N, int nnz, int m,
     SCOTCH_graphInit(&graf);
     if (SCOTCH_graphBuild(&graf, 0, (SCOTCH_Num)dim, verttab.data(), verttab.data() + 1,
                           nullptr, nullptr, edgenbr, edgetab.data(), nullptr) != 0) {
-        std::fprintf(stderr, "runSCOTCH: SCOTCH_graphBuild failed\n");
+        sTiles::Logger::errorf("runSCOTCH: SCOTCH_graphBuild failed");
         SCOTCH_graphExit(&graf);
         return 1;
     }
@@ -211,14 +211,14 @@ static int runSCOTCH_impl(int** csr_i, int** csr_j, int N, int nnz, int m,
         }
         strat_rc = SCOTCH_stratGraphOrder(&strat, quality_strat);
         if (strat_rc != 0)
-            std::fprintf(stderr, "runSCOTCH: custom strategy failed, using built-in\n");
+            sTiles::Logger::errorf("runSCOTCH: custom strategy failed, using built-in");
     }
     if (strat_rc != 0) {
         const SCOTCH_Num flags = SCOTCH_STRATQUALITY | SCOTCH_STRATRECURSIVE | SCOTCH_STRATBALANCE;
         strat_rc = SCOTCH_stratGraphOrderBuild(&strat, flags, 0, 0.05);
     }
     if (strat_rc != 0) {
-        std::fprintf(stderr, "runSCOTCH: strategy build failed\n");
+        sTiles::Logger::errorf("runSCOTCH: strategy build failed");
         SCOTCH_stratExit(&strat);
         SCOTCH_graphExit(&graf);
         return 1;
@@ -267,7 +267,7 @@ static int runSCOTCH_impl(int** csr_i, int** csr_j, int N, int nnz, int m,
                                      cblknbr_ptr, rangtab_ptr, treetab_ptr);
     }
     if (order_rc != 0) {
-        std::fprintf(stderr, "runSCOTCH: SCOTCH_graphOrder failed\n");
+        sTiles::Logger::errorf("runSCOTCH: SCOTCH_graphOrder failed");
         SCOTCH_stratExit(&strat);
         SCOTCH_graphExit(&graf);
         return 1;
@@ -278,7 +278,7 @@ static int runSCOTCH_impl(int** csr_i, int** csr_j, int N, int nnz, int m,
     for (int i = 0; i < dim; ++i) (*iperm)[i] = (int)sp[i];
     for (int i = dim; i < N;   ++i) (*iperm)[i] = i;
     if (!build_perm_from_iperm(*perm, *iperm, N)) {
-        std::fprintf(stderr, "runSCOTCH: SCOTCH returned an invalid permutation (dim=%d, N=%d)\n", dim, N);
+        sTiles::Logger::errorf("runSCOTCH: SCOTCH returned an invalid permutation (dim=%d, N=%d)", dim, N);
         return 1;   // reject: caller falls back to another ordering (or identity)
     }
 
@@ -331,7 +331,7 @@ int runASCOTCH(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, int*
         pperm     = static_cast<int*>(std::malloc(static_cast<size_t>(N)   * sizeof(int)));
 
         if (!save_rows || !save_cols || !pperm) {
-            std::fprintf(stderr, "runASCOTCH: memory allocation failed for save buffers or pperm\n");
+            sTiles::Logger::errorf("runASCOTCH: memory allocation failed for save buffers or pperm");
             std::free(save_rows); std::free(save_cols); std::free(pperm);
             return 1;
         }
@@ -345,7 +345,7 @@ int runASCOTCH(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, int*
 
     const int dim = N - m;
     if (dim <= 0) {
-        std::fprintf(stderr, "runASCOTCH: dim = N - m <= 0 (N = %d, m = %d)\n", N, m);
+        sTiles::Logger::errorf("runASCOTCH: dim = N - m <= 0 (N = %d, m = %d)", N, m);
         std::free(save_rows); std::free(save_cols); std::free(pperm);
         return 1;
     }
@@ -358,7 +358,7 @@ int runASCOTCH(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, int*
     SCOTCH_graphInit(&graf);
     if (SCOTCH_graphBuild(&graf, 0, (SCOTCH_Num)dim, verttab.data(), verttab.data() + 1,
                           nullptr, nullptr, edgenbr, edgetab.data(), nullptr) != 0) {
-        std::fprintf(stderr, "runASCOTCH: SCOTCH_graphBuild failed\n");
+        sTiles::Logger::errorf("runASCOTCH: SCOTCH_graphBuild failed");
         SCOTCH_graphExit(&graf);
         std::free(save_rows); std::free(save_cols); std::free(pperm);
         return 1;
@@ -375,7 +375,7 @@ int runASCOTCH(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, int*
         : (SCOTCH_STRATQUALITY | SCOTCH_STRATRECURSIVE);
     const double strat_imbal_a = (dim > 400000) ? 0.05 : 0.1;
     if (SCOTCH_stratGraphOrderBuild(&strat, strat_flags_a, 0, strat_imbal_a) != 0) {
-        std::fprintf(stderr, "runASCOTCH: SCOTCH_stratGraphOrderBuild failed\n");
+        sTiles::Logger::errorf("runASCOTCH: SCOTCH_stratGraphOrderBuild failed");
         SCOTCH_stratExit(&strat);
         SCOTCH_graphExit(&graf);
         std::free(save_rows); std::free(save_cols); std::free(pperm);
@@ -404,7 +404,7 @@ int runASCOTCH(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, int*
         order_rc = SCOTCH_graphOrder(&graf, &strat, scotch_perm.data(), scotch_iperm.data(), nullptr, nullptr, nullptr);
     }
     if (order_rc != 0) {
-        std::fprintf(stderr, "runASCOTCH: SCOTCH_graphOrder failed\n");
+        sTiles::Logger::errorf("runASCOTCH: SCOTCH_graphOrder failed");
         SCOTCH_stratExit(&strat);
         SCOTCH_graphExit(&graf);
         std::free(save_rows); std::free(save_cols); std::free(pperm);
@@ -416,7 +416,7 @@ int runASCOTCH(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, int*
     for (int i = 0; i < dim; ++i) (*iperm)[i] = (int)scotch_perm[i];
     for (int i = dim; i < N;   ++i) (*iperm)[i] = i;
     if (!build_perm_from_iperm(*perm, *iperm, N)) {
-        std::fprintf(stderr, "runASCOTCH: SCOTCH returned an invalid permutation (dim=%d, N=%d)\n", dim, N);
+        sTiles::Logger::errorf("runASCOTCH: SCOTCH returned an invalid permutation (dim=%d, N=%d)", dim, N);
         std::free(save_rows); std::free(save_cols); std::free(pperm);
         return 1;
     }
@@ -428,7 +428,7 @@ int runASCOTCH(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, int*
 
         int* newperm = static_cast<int*>(std::malloc(static_cast<size_t>(N) * sizeof(int)));
         if (!newperm) {
-            std::fprintf(stderr, "runASCOTCH: memory allocation failed for newperm\n");
+            sTiles::Logger::errorf("runASCOTCH: memory allocation failed for newperm");
             std::free(save_rows); std::free(save_cols); std::free(pperm);
             return 1;
         }
@@ -444,7 +444,7 @@ int runASCOTCH(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, int*
         std::free(save_cols);
         std::free(pperm);
         if (!perm_ok) {
-            std::fprintf(stderr, "runASCOTCH: composed permutation invalid (N=%d)\n", N);
+            sTiles::Logger::errorf("runASCOTCH: composed permutation invalid (N=%d)", N);
             return 1;
         }
     }

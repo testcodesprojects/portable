@@ -39,13 +39,13 @@
  */
 TreeLeaf* createOptimizedTree(int num_splits, int num_tasks, int leafheight, int leafwidth, int group_index) {
     if (num_splits <= 0 || num_tasks <= 0) {
-        fprintf(stderr, "Invalid input: num_splits=%d, num_tasks=%d\n", num_splits, num_tasks);
+        sTiles::Logger::errorf("Invalid input: num_splits=%d, num_tasks=%d", num_splits, num_tasks);
         return nullptr;
     }
 
     TreeLeaf *tree = MemoryManager::allocate<TreeLeaf>(1, group_index);
     if (!tree) {
-        fprintf(stderr, "Failed to allocate memory for TreeLeaf.\n");
+        sTiles::Logger::errorf("Failed to allocate memory for TreeLeaf.");
         return nullptr;
     }
 
@@ -55,7 +55,7 @@ TreeLeaf* createOptimizedTree(int num_splits, int num_tasks, int leafheight, int
     // Allocate nodes
     tree->nodes = MemoryManager::allocate<NodeLeaf>(num_splits, group_index);
     if (!tree->nodes) {
-        fprintf(stderr, "Failed to allocate memory for nodes.\n");
+        sTiles::Logger::errorf("Failed to allocate memory for nodes.");
         MemoryManager::deallocate(tree);  // Free tree before returning
         return nullptr;
     }
@@ -63,7 +63,7 @@ TreeLeaf* createOptimizedTree(int num_splits, int num_tasks, int leafheight, int
     // Allocate dependency array
     tree->dependency = MemoryManager::allocateZero<int>(num_splits, group_index);
     if (!tree->dependency) {
-        fprintf(stderr, "Failed to allocate memory for dependency.\n");
+        sTiles::Logger::errorf("Failed to allocate memory for dependency.");
         MemoryManager::deallocate(tree->nodes);
         MemoryManager::deallocate(tree);
         return nullptr;
@@ -74,7 +74,7 @@ TreeLeaf* createOptimizedTree(int num_splits, int num_tasks, int leafheight, int
         tree->nodes[i].index = i;
         tree->nodes[i].x = MemoryManager::allocateZero<double>(leafheight * leafwidth, group_index);
         if (!tree->nodes[i].x) {
-            fprintf(stderr, "Failed to allocate memory for x at index %d.\n", i);
+            sTiles::Logger::errorf("Failed to allocate memory for x at index %d.", i);
             
             // Free already allocated memory before returning
             for (int j = 0; j < i; ++j) {
@@ -157,7 +157,7 @@ TreeLeaf* createTree(int num_gemm_operations, int leafheight, int leafwidth, int
 
     TreeLeaf *tree = (TreeLeaf*)malloc(sizeof(TreeLeaf));
     if (!tree) {
-        fprintf(stderr, "Failed to allocate memory for tree.\n");
+        sTiles::Logger::errorf("Failed to allocate memory for tree.");
         exit(EXIT_FAILURE);
     }
 
@@ -165,7 +165,7 @@ TreeLeaf* createTree(int num_gemm_operations, int leafheight, int leafwidth, int
     tree->gold_number = (int*)calloc(levels, sizeof(int));
     tree->half_gold = (int*)calloc(levels, sizeof(int));
     if (!tree->gold_number || !tree->half_gold) {
-        fprintf(stderr, "Failed to allocate memory for gold_number and half_gold.\n");
+        sTiles::Logger::errorf("Failed to allocate memory for gold_number and half_gold.");
         exit(EXIT_FAILURE);
     }
 
@@ -178,7 +178,7 @@ TreeLeaf* createTree(int num_gemm_operations, int leafheight, int leafwidth, int
 
     tree->max_nodes = (int*)malloc(levels * sizeof(int));
     if (!tree->max_nodes) {
-        fprintf(stderr, "Failed to allocate memory for max_nodes.\n");
+        sTiles::Logger::errorf("Failed to allocate memory for max_nodes.");
         exit(EXIT_FAILURE);
     }
 
@@ -195,7 +195,7 @@ TreeLeaf* createTree(int num_gemm_operations, int leafheight, int leafwidth, int
 
     tree->nodes = (NodeLeaf*)malloc(num_gemm_operations * sizeof(NodeLeaf));
     if (!tree->nodes) {
-        fprintf(stderr, "Failed to allocate memory for nodes.\n");
+        sTiles::Logger::errorf("Failed to allocate memory for nodes.");
         exit(EXIT_FAILURE);
     }
 
@@ -207,14 +207,14 @@ TreeLeaf* createTree(int num_gemm_operations, int leafheight, int leafwidth, int
         tree->nodes[i].leafheight = leafheight;
 
         if (!tree->nodes[i].x) {
-            fprintf(stderr, "Failed to allocate memory for x at index %d.\n", i);
+            sTiles::Logger::errorf("Failed to allocate memory for x at index %d.", i);
             exit(EXIT_FAILURE);
         }
     }
 
     tree->dependency = (int*)calloc(tree->max_nodes[0], sizeof(int));
     if (!tree->dependency) {
-        fprintf(stderr, "Failed to allocate memory for dependency.\n");
+        sTiles::Logger::errorf("Failed to allocate memory for dependency.");
         exit(EXIT_FAILURE);
     }
 
@@ -234,7 +234,7 @@ TreeLeaf* createRedTree(int new_tiles, int num_gemm_operations, int leafheight, 
 
     TreeLeaf *tree = (TreeLeaf*)malloc(sizeof(TreeLeaf));
     if (!tree) {
-        fprintf(stderr, "Failed to allocate memory for tree.\n");
+        sTiles::Logger::errorf("Failed to allocate memory for tree.");
         exit(EXIT_FAILURE);
     }
 
@@ -251,21 +251,21 @@ TreeLeaf* createRedTree(int new_tiles, int num_gemm_operations, int leafheight, 
 
     tree->nodes = (NodeLeaf*)malloc(new_tiles * sizeof(NodeLeaf));
     if (!tree->nodes) {
-        fprintf(stderr, "Failed to allocate memory for nodes.\n");
+        sTiles::Logger::errorf("Failed to allocate memory for nodes.");
         exit(EXIT_FAILURE);
     }
 
     for (int i = 0; i < new_tiles; ++i) {
         tree->nodes[i].x = (double*)calloc(leafheight * leafwidth, sizeof(double));
         if (!tree->nodes[i].x) {
-            fprintf(stderr, "Failed to allocate memory for x at index %d.\n", i);
+            sTiles::Logger::errorf("Failed to allocate memory for x at index %d.", i);
             exit(EXIT_FAILURE);
         }
     }
 
     tree->dependency = (int*)calloc(new_tiles, sizeof(int));
     if (!tree->dependency) {
-        fprintf(stderr, "Failed to allocate memory for dependency.\n");
+        sTiles::Logger::errorf("Failed to allocate memory for dependency.");
         exit(EXIT_FAILURE);
     }
 
@@ -708,7 +708,7 @@ int TREE_SETUP_STG2_STILES(int num_tiles, int tile_size, int *tree_sep, bool *on
     int* gemmcounter_redtree = (int*)calloc(num_sep, sizeof(int));
 
     if (gemmcounter_redtree == NULL) {
-        fprintf(stderr, "Memory allocation failed\n");
+        sTiles::Logger::errorf("Memory allocation failed");
         return 1;
     }
 
@@ -724,7 +724,7 @@ int TREE_SETUP_STG2_STILES(int num_tiles, int tile_size, int *tree_sep, bool *on
         int num_trees = 0;
         TreeLeaf **trees = (TreeLeaf**)calloc(num_sep, sizeof(TreeLeaf*));
         if (trees == NULL) {
-            fprintf(stderr, "Memory allocation failed\n");
+            sTiles::Logger::errorf("Memory allocation failed");
             free(gemmcounter_redtree); // Free previously allocated memory
             return 0;
         }
@@ -780,7 +780,7 @@ int TREE_SETUP_STG2_STILES_PHASE_0(int num_tiles, int tile_size, int *tree_sep, 
     // Allocate memory for gemmcounter_redtree
     *gemmcounter_redtree = MemoryManager::allocateZero<int>(num_sep, group_index);
     if (*gemmcounter_redtree == NULL) { // Check the dereferenced pointer
-        fprintf(stderr, "Memory allocation failed\n");
+        sTiles::Logger::errorf("Memory allocation failed");
         return -1; // Return error code
     }
 
@@ -893,7 +893,7 @@ int TREE_SETUP_STG2_STILES_HASH(int num_tiles, int tile_size, int *tree_sep, int
     int* gemmcounter_redtree = (int*)calloc(num_sep, sizeof(int));
 
     if (gemmcounter_redtree == NULL) {
-        fprintf(stderr, "Memory allocation failed\n");
+        sTiles::Logger::errorf("Memory allocation failed");
         return 1;
     }
 
@@ -909,7 +909,7 @@ int TREE_SETUP_STG2_STILES_HASH(int num_tiles, int tile_size, int *tree_sep, int
     int num_trees = 0;
     TreeLeaf **trees = (TreeLeaf**)calloc(num_sep, sizeof(TreeLeaf*));
     if (trees == NULL) {
-        fprintf(stderr, "Memory allocation failed\n");
+        sTiles::Logger::errorf("Memory allocation failed");
         free(gemmcounter_redtree); // Free previously allocated memory
         return 0;
     }
@@ -979,7 +979,7 @@ int TREE_SETUP_STG2_STILES_HASH_BIT(int num_tiles, int tile_size, int *tree_sep,
     int* gemmcounter_redtree = (int*)calloc(num_sep, sizeof(int));
 
     if (gemmcounter_redtree == NULL) {
-        fprintf(stderr, "Memory allocation failed\n");
+        sTiles::Logger::errorf("Memory allocation failed");
         return 1;
     }
 
@@ -996,7 +996,7 @@ int TREE_SETUP_STG2_STILES_HASH_BIT(int num_tiles, int tile_size, int *tree_sep,
     int num_trees = 0;
     TreeLeaf **trees = (TreeLeaf**)calloc(num_sep, sizeof(TreeLeaf*));
     if (trees == NULL) {
-        fprintf(stderr, "Memory allocation failed\n");
+        sTiles::Logger::errorf("Memory allocation failed");
         free(gemmcounter_redtree); // Free previously allocated memory
         return 0;
     }
@@ -1066,7 +1066,7 @@ int STILES_TREE_SETUP_STG2(int num_tiles, int tile_size, int *tree_sep, bool **o
     int* gemmcounter_redtree = (int*)calloc(num_sep, sizeof(int));
 
     if (gemmcounter_redtree == NULL) {
-        fprintf(stderr, "Memory allocation failed\n");
+        sTiles::Logger::errorf("Memory allocation failed");
         return 1;
     }
 
@@ -1083,7 +1083,7 @@ int STILES_TREE_SETUP_STG2(int num_tiles, int tile_size, int *tree_sep, bool **o
     int num_trees = 0;
     TreeLeaf **trees = (TreeLeaf**)calloc(num_sep, sizeof(TreeLeaf*));
     if (trees == NULL) {
-        fprintf(stderr, "Memory allocation failed\n");
+        sTiles::Logger::errorf("Memory allocation failed");
         free(gemmcounter_redtree); // Free previously allocated memory
         return 0;
     }

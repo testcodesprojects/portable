@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <numeric>
+#include "../common/stiles_logger.hpp"
 
 extern "C" {
     void gpskca_(int* N, int* DEGREE, int* RSTART, int* CONNEC,
@@ -108,7 +109,7 @@ void stiles_runGPS(int* csr_i, int* csr_j, int N, int nnz,
             &BANDWD, &PROFIL, &ERROR, &SPACE);
 
     if (ERROR)
-        fprintf(stderr, "[GPS] gpskca_ returned error=%d (N=%d)\n", ERROR, N);
+        sTiles::Logger::errorf("[GPS] gpskca_ returned error=%d (N=%d)", ERROR, N);
 
     // PERMUT(i) = j (1-based): node i → new position j → iperm
     *iperm = (int*)malloc(N * sizeof(int));

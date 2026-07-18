@@ -3416,14 +3416,13 @@ extern "C" int* sTiles_get_params();
 // dispatchers).
 void stiles_pdtrsm_forward_dispatch(stiles_context_t *stile) {
 
-    static int* stiles_control_params = sTiles_get_params();
-    const int tile_type_mode = stiles_control_params[3];
-
     // Unpack arguments to determine variant
     TiledMatrix *tiledMatrixA;
     double *B;
     int nrhs;
     sTiles::unpack_args(stile, tiledMatrixA, B, nrhs);
+
+    const int tile_type_mode = stiles_scheme_tile_mode(tiledMatrixA);
 
     // Get factorization variant directly from scheme
     const int variant = tiledMatrixA->factorization_variant;
@@ -3482,14 +3481,13 @@ void stiles_pdtrsm_forward_dispatch(stiles_context_t *stile) {
 
 void stiles_pdtrsm_backward_dispatch(stiles_context_t *stile) {
 
-    static int* stiles_control_params = sTiles_get_params();
-    const int tile_type_mode = stiles_control_params[3];
-
     // Unpack arguments to determine variant
     TiledMatrix *tiledMatrixA;
     double *B;
     int nrhs;
     sTiles::unpack_args(stile, tiledMatrixA, B, nrhs);
+
+    const int tile_type_mode = stiles_scheme_tile_mode(tiledMatrixA);
 
     // Get factorization variant directly from scheme
     const int variant = tiledMatrixA->factorization_variant;

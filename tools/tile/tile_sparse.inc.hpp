@@ -447,7 +447,7 @@
             return StatusCode::Success;
         }
         if (fact_variant != 0 && fact_variant != 3) {
-            std::fprintf(stderr, "ERROR: Unsupported factorization_variant %d\n", fact_variant);
+            sTiles::Logger::errorf("Unsupported factorization_variant %d", fact_variant);
             return StatusCode::InvalidArgument;
         }
 
@@ -462,7 +462,7 @@
         scheme->sparseTileMetaCore = TileMemoryManager::allocate<SparseTileMetaCore>(num_active, group_index);
         scheme->sparseTileMetaData = TileMemoryManager::allocate<SparseTileMetaData>(num_active, group_index);
         if (!scheme->sparseTileMetaCore || !scheme->sparseTileMetaData) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for sparse metadata.\n");
+            sTiles::Logger::errorf("Memory allocation failed for sparse metadata.");
             return StatusCode::OutOfResources;
         }
         // Construct SparseTileMetaCore and SparseTileMetaData objects (contain std::vector members)
@@ -473,14 +473,14 @@
 
         scheme->tileMetaCore = TileMemoryManager::allocate<TileMetaCore>(num_active, group_index);
         if (!scheme->tileMetaCore) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for denseTiles or tileMetaCore.\n");
+            sTiles::Logger::errorf("Memory allocation failed for denseTiles or tileMetaCore.");
             return StatusCode::OutOfResources;
         }
 
         if (scheme->compute_inverse) {
             scheme->invSparseTileMetaCore = TileMemoryManager::allocate<SparseTileMetaCore>(num_active, group_index);
             if (!scheme->invSparseTileMetaCore) {
-                std::fprintf(stderr, "ERROR: Memory allocation failed for invSparseTileMetaCore.\n");
+                sTiles::Logger::errorf("Memory allocation failed for invSparseTileMetaCore.");
                 return StatusCode::OutOfResources;
             }
             // Construct invSparseTileMetaCore objects (contain std::vector members)
@@ -508,7 +508,7 @@
 
         scheme->facTiles = TileMemoryManager::allocate<SmartTile>(num_active, group_index);
         if (!scheme->facTiles) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for facTiles.\n");
+            sTiles::Logger::errorf("Memory allocation failed for facTiles.");
             return StatusCode::OutOfResources;
         }
 
@@ -518,7 +518,7 @@
             scheme->invTiles = TileMemoryManager::allocate<SmartTile>(num_active, group_index);
             scheme->tmpTiles = TileMemoryManager::allocate<SmartTile>(num_active, group_index);
             if (!scheme->invTiles || !scheme->tmpTiles) {
-                std::fprintf(stderr, "ERROR: Memory allocation failed for invTiles/tmpTiles.\n");
+                sTiles::Logger::errorf("Memory allocation failed for invTiles/tmpTiles.");
                 return StatusCode::OutOfResources;
             }
 

@@ -15,6 +15,7 @@
 #include <fstream> // Include this header for file stream operations
 #include <cmath> // Include this header for mathematical operations
 #include <omp.h> // for omp_get_wtime() timing
+#include "../common/stiles_logger.hpp"
 
 // METIS header — Makefile passes the resolved absolute path via
 // STILES_METIS_HEADER (either system /usr/include/metis.h or the bundled
@@ -102,7 +103,7 @@ int NESTED_DISSECTION_LEVEL_1_FINAL(bool*** on_off_tiles, int full_dim, int *new
     //int check_num1 = 2*(5*bandwidth) + bandwidth;
     //if(check_num1 > dim) return -1;
 
-    if(checks) printf("        -  bandwidth %d\n", bandwidth);
+    if(checks) sTiles::Logger::debugf("        -  bandwidth %d", bandwidth);
 
     //bandwidth -= 100;
     double star_points[] = {
@@ -152,9 +153,9 @@ int NESTED_DISSECTION_LEVEL_1_FINAL(bool*** on_off_tiles, int full_dim, int *new
 
     if(checks){
 
-        printf("        - EXPANSION SIZE           : %d.\n", sum_additionalSize);
+        sTiles::Logger::debugf("        - EXPANSION SIZE           : %d.", sum_additionalSize);
         for (int i = 0; i < size_sizes; ++i) {
-            printf("                    - partition[%d] was: %8d, then partition[%d] becomes %8d with aditional size %d.\n", i, sizes[i], i, newsizes[i], additionalSize[i]);
+            sTiles::Logger::debugf("                    - partition[%d] was: %8d, then partition[%d] becomes %8d with aditional size %d.", i, sizes[i], i, newsizes[i], additionalSize[i]);
             //printf("                    - partition[%d] was: %8d, then partition[%d] becomes %8d with aditional size %d.\n", i, sizes[i], i, newsizes[i]/tile_size, additionalSize[i]);
 
         }
@@ -270,7 +271,7 @@ int NESTED_DISSECTION_LEVEL_1_FINAL(bool*** on_off_tiles, int full_dim, int *new
         delete[] newFull_i;
         delete[] newFull_j;
         //delete[] newFull_x;
-        std::cerr << "Failed to allocate memory." << std::endl;
+        sTiles::Logger::error("Failed to allocate memory.");
         return -1;  // or handle the error as appropriate
     }
 
@@ -455,14 +456,14 @@ static bool try_node_level_metis(idx_t nvtxs, idx_t* xadj, idx_t* adjncy,
         const idx_t orig_edges = xadj[nvtxs];
         const idx_t coarse_edges = static_cast<idx_t>(c_adjncy.size());
         if (coarse_edges * k > orig_edges) {
-            fprintf(stderr, "[ND-COARSEN] block_size=%d: coarsened %d edges vs original %d — "
-                    "not enough reduction, skipping\n",
+            sTiles::Logger::errorf("[ND-COARSEN] block_size=%d: coarsened %d edges vs original %d — "
+                    "not enough reduction, skipping",
                     (int)k, (int)coarse_edges, (int)orig_edges);
             continue;
         }
 
-        fprintf(stderr, "[ND-COARSEN] block_size=%d: %d nodes (from %d DOFs), "
-                "edges %d -> %d (%.1fx reduction)\n",
+        sTiles::Logger::errorf("[ND-COARSEN] block_size=%d: %d nodes (from %d DOFs), "
+                "edges %d -> %d (%.1fx reduction)",
                 (int)k, (int)coarse_n, (int)nvtxs,
                 (int)orig_edges, (int)coarse_edges,
                 (double)orig_edges / (double)coarse_edges);
@@ -477,19 +478,19 @@ static bool try_node_level_metis(idx_t nvtxs, idx_t* xadj, idx_t* adjncy,
         if (use_ndp) {
             ret = METIS_NodeNDP(coarse_n, c_xadj.data(), c_adjncy.data(),
                                 NULL, npes, options, c_perm, c_iperm, c_sizes);
-            fprintf(stderr, "[ND-COARSEN] METIS_NodeNDP on coarsened: %.3f s (ret=%d)\n",
+            sTiles::Logger::errorf("[ND-COARSEN] METIS_NodeNDP on coarsened: %.3f s (ret=%d)",
                     omp_get_wtime() - t_m, ret);
         } else {
             idx_t coarse_n_mut = coarse_n;
             ret = METIS_NodeND(&coarse_n_mut, c_xadj.data(), c_adjncy.data(),
                                NULL, options, c_perm, c_iperm);
-            fprintf(stderr, "[ND-COARSEN] METIS_NodeND on coarsened: %.3f s (ret=%d)\n",
+            sTiles::Logger::errorf("[ND-COARSEN] METIS_NodeND on coarsened: %.3f s (ret=%d)",
                     omp_get_wtime() - t_m, ret);
         }
 
         if (ret != METIS_OK) {
             delete[] c_perm; delete[] c_iperm; delete[] c_sizes;
-            fprintf(stderr, "[ND-COARSEN] METIS failed on coarsened graph, falling back\n");
+            sTiles::Logger::errorf("[ND-COARSEN] METIS failed on coarsened graph, falling back");
             continue;
         }
 
@@ -533,7 +534,7 @@ int metis_ordering_nested_dissection(int* xadj_, int* adjncy_, int nvtxs_, int u
             if (deg > max_deg) max_deg = deg;
         }
         if (max_deg > 5 * avg_degree) {
-            //fprintf(stderr, "[metis_nd] skipping: hub detected (max_deg=%d > 5*avg_deg=%.1f) — identity permutation\n",
+            //sTiles::Logger::errorf("[metis_nd] skipping: hub detected (max_deg=%d > 5*avg_deg=%.1f) — identity permutation",
             //        max_deg, avg_degree);
             g_nd_hub_skipped = true;
             if (perm_ && *perm_ && iperm_ && *iperm_)
@@ -593,17 +594,17 @@ int metis_ordering_nested_dissection(int* xadj_, int* adjncy_, int nvtxs_, int u
     //double _t0 = omp_get_wtime();
     bool coarsened = try_node_level_metis(nvtxs, xadj, adjncy, npes, options,
                                           perm, iperm, sizes, size_sizes, g_nd_use_ndp);
-    //fprintf(stderr, "[metis_nd] coarsen_attempt=%.3fs coarsened=%d n=%d edges=%d\n",
+    //sTiles::Logger::errorf("[metis_nd] coarsen_attempt=%.3fs coarsened=%d n=%d edges=%d",
     //        omp_get_wtime() - _t0, (int)coarsened, (int)nvtxs, (int)(2*upper_nnz));
 
     if (!coarsened) {
         //double _t1 = omp_get_wtime();
         if (g_nd_use_ndp) {
             int ret = METIS_NodeNDP(nvtxs, xadj, adjncy, NULL, npes, options, perm, iperm, sizes);
-            //fprintf(stderr, "[metis_nd] METIS_NodeNDP=%.3fs ret=%d\n", omp_get_wtime()-_t1, ret);
+            //sTiles::Logger::errorf("[metis_nd] METIS_NodeNDP=%.3fs ret=%d", omp_get_wtime()-_t1, ret);
         } else {
             int ret = METIS_NodeND(&nvtxs, xadj, adjncy, NULL, options, perm, iperm);
-            //fprintf(stderr, "[metis_nd] METIS_NodeND=%.3fs ret=%d n=%d avg_deg=%.1f compress=%d niter=%d\n",
+            //sTiles::Logger::errorf("[metis_nd] METIS_NodeND=%.3fs ret=%d n=%d avg_deg=%.1f compress=%d niter=%d",
             //        omp_get_wtime()-_t1, ret, (int)nvtxs, avg_degree,
             //        (int)options[METIS_OPTION_COMPRESS],
             //        (int)options[METIS_OPTION_NITER]);
@@ -612,7 +613,7 @@ int metis_ordering_nested_dissection(int* xadj_, int* adjncy_, int nvtxs_, int u
     }
 
     if (!perm_ || !iperm_ || !*perm_ || !*iperm_) {
-        fprintf(stderr, "metis_ordering_nested_dissection: null permutation buffers provided.\n");
+        sTiles::Logger::errorf("metis_ordering_nested_dissection: null permutation buffers provided.");
         delete[] xadj; delete[] adjncy; delete[] perm; delete[] iperm; delete[] sizes;
         return -1;
     }
@@ -648,7 +649,7 @@ int metis_ordering_nested_dissection_m(int* xadj_, int* adjncy_, int nvtxs_, int
             if (deg > max_deg) max_deg = deg;
         }
         if (max_deg > 5 * avg_degree) {
-            //fprintf(stderr, "[metis_nd] skipping: hub detected (max_deg=%d > 5*avg_deg=%.1f) — identity permutation\n",
+            //sTiles::Logger::errorf("[metis_nd] skipping: hub detected (max_deg=%d > 5*avg_deg=%.1f) — identity permutation",
             //        max_deg, avg_degree);
             g_nd_hub_skipped = true;
             if (perm_ && *perm_ && iperm_ && *iperm_)
@@ -717,7 +718,7 @@ int metis_ordering_nested_dissection_m(int* xadj_, int* adjncy_, int nvtxs_, int
     }
 
     if (!perm_ || !iperm_ || !*perm_ || !*iperm_) {
-        fprintf(stderr, "metis_ordering_nested_dissection_m: null permutation buffers provided.\n");
+        sTiles::Logger::errorf("metis_ordering_nested_dissection_m: null permutation buffers provided.");
         delete[] xadj; delete[] adjncy; delete[] perm; delete[] iperm; delete[] sizes;
         return -1;
     }
@@ -1094,7 +1095,7 @@ void stiles_runND_original(int** csr_i, int** csr_j, int N, int nnz, int m, int*
         }
 
         if (!newperm) {
-            fprintf(stderr, "Memory allocation failed for newperm.\n");
+            sTiles::Logger::errorf("Memory allocation failed for newperm.");
             free(save_rows);
             free(save_cols);
             free(pperm);
@@ -1171,7 +1172,7 @@ void stiles_ND_RCM(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, 
         }
 
         if (!newperm) {
-            fprintf(stderr, "Memory allocation failed for newperm.\n");
+            sTiles::Logger::errorf("Memory allocation failed for newperm.");
             free(save_rows);
             free(save_cols);
             free(pperm);

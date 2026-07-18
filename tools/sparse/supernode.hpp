@@ -1,5 +1,34 @@
-#ifndef SPS_CORE_SUPERNODE_HPP
-#define SPS_CORE_SUPERNODE_HPP
+/**
+ * @file    supernode.hpp
+ * @brief   Supernode detection, amalgamation and the non-uniform cell layout.
+ *
+ * @project sTiles (Sparse Tiles Library)
+ * @author  Esmail Abdul Fattah, King Abdullah University of Science and Technology (KAUST)
+ * @contact esmail.abdulfattah@kaust.edu.sa
+ * @version 3.0.0
+ * @date 1 1 2026
+ * @license Proprietary
+ *
+ * @note This file is part of the sTiles library, a proprietary software package.
+ *       Redistribution or modification without prior permission is prohibited.
+ *
+ * Copyright (c) 2026, Esmail Abdul Fattah, KAUST. All rights reserved.
+ *
+ * @license
+ * This software is proprietary and confidential. Unauthorized copying, distribution, or modification
+ * of this software, via any medium, is strictly prohibited. Permission is granted to use the software
+ * in binary form for non-commercial purposes only, provided that this copyright notice and permission
+ * notice are included in all copies or substantial portions of the software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+ * NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+#ifndef _STILES_SPARSE_SUPERNODE_HPP_
+#define _STILES_SPARSE_SUPERNODE_HPP_
 
 #include "etree.hpp"
 #include "symbolic.hpp"
@@ -28,12 +57,12 @@ namespace sTiles { namespace sparse {
 // cell's first row entry. The cell's row indices in *global* numbering are
 // `row_pattern[lx_offset - 1 .. lx_offset + rows - 2]`, sorted ascending.
 struct Cell {
-  Int     I        = 0;
-  Int     J        = 0;
-  Int     rows     = 0;
-  Int     cols     = 0;
-  Ptr     lx_offset = 0;
-  double* nzval    = nullptr;
+    Int     I        = 0;
+    Int     J        = 0;
+    Int     rows     = 0;
+    Int     cols     = 0;
+    Ptr     lx_offset = 0;
+    double* nzval    = nullptr;
 };
 
 // Owning storage of all cells. One contiguous arena of doubles backs every
@@ -42,69 +71,69 @@ struct Cell {
 // increasing J within each group; the diagonal cell of supernode I is the
 // first cell of its group.
 class CellStore {
- public:
-  CellStore() = default;
-  CellStore(const CellStore&)            = delete;
-  CellStore& operator=(const CellStore&) = delete;
-  CellStore(CellStore&& other) noexcept;
-  CellStore& operator=(CellStore&& other) noexcept;
-  ~CellStore();
+  public:
+    CellStore() = default;
+    CellStore(const CellStore&)            = delete;
+    CellStore& operator=(const CellStore&) = delete;
+    CellStore(CellStore&& other) noexcept;
+    CellStore& operator=(CellStore&& other) noexcept;
+    ~CellStore();
 
-  // Allocate the arena (via sTiles::Memory::MemoryManager, tagged with
-  // `group_id`) and emit the cells_ + cell_idx_ layout. The arena is
-  // zero-initialized. Existing arena (if any) is freed first.
-  void allocate(const Symbolic& s, int group_id = -1);
+    // Allocate the arena (via sTiles::Memory::MemoryManager, tagged with
+    // `group_id`) and emit the cells_ + cell_idx_ layout. The arena is
+    // zero-initialized. Existing arena (if any) is freed first.
+    void allocate(const Symbolic& s, int group_id = -1);
 
-  // Walk the user's lower-triangular CSC of A, permute each entry through
-  // `s.ordering`, and write into the right cell at the right (r, c) offset.
-  // Pre-existing arena values are not cleared (caller can zero the arena
-  // first if needed).
-  void load_from_csc(const CscLower& A_lower, const Symbolic& s);
+    // Walk the user's lower-triangular CSC of A, permute each entry through
+    // `s.ordering`, and write into the right cell at the right (r, c) offset.
+    // Pre-existing arena values are not cleared (caller can zero the arena
+    // first if needed).
+    void load_from_csc(const CscLower& A_lower, const Symbolic& s);
 
-  // Build a flat "scatter plan": for each nonzero position p of A_lower (index
-  // into A_lower.nzval / A_lower.rowind), record the ABSOLUTE arena offset where
-  // that value must land, or -1 to skip (upper-tri duplicate). The plan depends
-  // ONLY on the symbolic pattern + ordering + cell geometry — none of which
-  // change across re-factorizations — so it is built once and reused. This is
-  // exactly the per-entry destination that load_from_csc() recomputes every
-  // call (two invp lookups + two supernode lookups + find() + a lower_bound).
-  // Arena must be allocated (arena_size() > 0) before calling.
-  void build_load_map(const CscLower& A_lower, const Symbolic& s,
-                      std::vector<Ptr>& map_out) const;
+    // Build a flat "scatter plan": for each nonzero position p of A_lower (index
+    // into A_lower.nzval / A_lower.rowind), record the ABSOLUTE arena offset where
+    // that value must land, or -1 to skip (upper-tri duplicate). The plan depends
+    // ONLY on the symbolic pattern + ordering + cell geometry — none of which
+    // change across re-factorizations — so it is built once and reused. This is
+    // exactly the per-entry destination that load_from_csc() recomputes every
+    // call (two invp lookups + two supernode lookups + find() + a lower_bound).
+    // Arena must be allocated (arena_size() > 0) before calling.
+    void build_load_map(const CscLower& A_lower, const Symbolic& s,
+                        std::vector<Ptr>& map_out) const;
 
-  // Apply a plan from build_load_map(): arena[map[p]] = A_lower.nzval[p] for
-  // every p with map[p] >= 0. Assumes the arena is already zeroed. Equivalent
-  // in result to load_from_csc() but with no per-entry index computation.
-  void load_from_csc_mapped(const CscLower& A_lower, const std::vector<Ptr>& map);
+    // Apply a plan from build_load_map(): arena[map[p]] = A_lower.nzval[p] for
+    // every p with map[p] >= 0. Assumes the arena is already zeroed. Equivalent
+    // in result to load_from_csc() but with no per-entry index computation.
+    void load_from_csc_mapped(const CscLower& A_lower, const std::vector<Ptr>& map);
 
-  // Lookup. Returns nullptr if cell (J, I) is not present.
-  Cell*       find(Int J, Int I);
-  const Cell* find(Int J, Int I) const;
+    // Lookup. Returns nullptr if cell (J, I) is not present.
+    Cell*       find(Int J, Int I);
+    const Cell* find(Int J, Int I) const;
 
-  Int         cell_count() const { return static_cast<Int>(cells_.size()); }
-  Cell&       at(Int idx)        { return cells_[idx]; }
-  const Cell& at(Int idx) const  { return cells_[idx]; }
+    Int         cell_count() const { return static_cast<Int>(cells_.size()); }
+    Cell&       at(Int idx)        { return cells_[idx]; }
+    const Cell& at(Int idx) const  { return cells_[idx]; }
 
-  Ptr           arena_size()  const { return arena_size_; }
-  const double* arena_data()  const { return arena_; }
-  double*       arena_data()        { return arena_; }
+    Ptr           arena_size()  const { return arena_size_; }
+    const double* arena_data()  const { return arena_; }
+    double*       arena_data()        { return arena_; }
 
-  // Allocate a fresh CellStore that mirrors `other`'s layout. The arena is
-  // zero-initialized via sTiles::Memory::MemoryManager (tagged with
-  // `group_id`), and nzval pointers are rebound to the new arena.
-  void allocate_like(const CellStore& other, int group_id = -1);
+    // Allocate a fresh CellStore that mirrors `other`'s layout. The arena is
+    // zero-initialized via sTiles::Memory::MemoryManager (tagged with
+    // `group_id`), and nzval pointers are rebound to the new arena.
+    void allocate_like(const CellStore& other, int group_id = -1);
 
- private:
-  void release_arena_();
+  private:
+    void release_arena_();
 
-  Int                       n_super_    = 0;
-  Ptr                       arena_size_ = 0;
-  double*                   arena_      = nullptr;   // owned via MemoryManager
-  int                       group_id_   = -1;
-  std::vector<Cell>         cells_;
-  std::unordered_map<int64_t, Int> cell_idx_;
+    Int                       n_super_    = 0;
+    Ptr                       arena_size_ = 0;
+    double*                   arena_      = nullptr;   // owned via MemoryManager
+    int                       group_id_   = -1;
+    std::vector<Cell>         cells_;
+    std::unordered_map<int64_t, Int> cell_idx_;
 };
 
 }}  // namespace sTiles::sparse
 
-#endif  // SPS_CORE_SUPERNODE_HPP
+#endif  // _STILES_SPARSE_SUPERNODE_HPP_

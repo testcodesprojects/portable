@@ -369,7 +369,7 @@
         //    L is lower-triangular (row >= col), tiles are stored upper-triangular.
         //    For off-diagonal entries: swap tile indices and local coordinates.
         if (scheme->L_colptr && scheme->L_rowind) {
-            const int* Lcp = scheme->L_colptr;
+            const int64_t* Lcp = scheme->L_colptr;
             const int* Lri = scheme->L_rowind;
             const int n    = scheme->dim;
 
@@ -378,7 +378,7 @@
                 const int tCol   = gCol / base_tile_size;
                 const int lCol   = gCol % base_tile_size;
 
-                for (int p = Lcp[j]; p < Lcp[j + 1]; ++p) {
+                for (int64_t p = Lcp[j]; p < Lcp[j + 1]; ++p) {
                     const int gRow = Lri[p];                 // global row in L (>= gCol)
                     const int tRow = gRow / base_tile_size;
                     const int lRow = gRow % base_tile_size;
@@ -577,7 +577,7 @@
         //    For off-diagonal entries: swap tile indices and local coordinates.
         //    Use all available system threads for this scan — it's a one-time setup cost.
         if (scheme->L_colptr && scheme->L_rowind) {
-            const int* Lcp = scheme->L_colptr;
+            const int64_t* Lcp = scheme->L_colptr;
             const int* Lri = scheme->L_rowind;
             const int n    = scheme->dim;
             const int scan_threads = std::max(threads, omp_get_max_threads());
@@ -588,7 +588,7 @@
                 const int tCol = gCol / base_tile_size;
                 const int lCol = gCol % base_tile_size;
 
-                for (int p = Lcp[j]; p < Lcp[j + 1]; ++p) {
+                for (int64_t p = Lcp[j]; p < Lcp[j + 1]; ++p) {
                     const int gRow = Lri[p];               // global row in L (>= gCol)
                     const int tRow = gRow / base_tile_size;
                     const int lRow = gRow % base_tile_size;
@@ -692,8 +692,8 @@
     inline StatusCode build_semisparse_tile_lookup(sTiles_call **call_info, TiledMatrix *scheme, int group_index, int num_cores) {
         // Check tile type mode and correction mode
         int* params = sTiles_get_params();
-        const int tile_type_mode = params[3];
-        const int correction_mode = params[0];
+        const int tile_type_mode = params[sTiles::param::TileTypeMode];
+        const int correction_mode = params[sTiles::param::SemisparsePruningMode];
 
         // Only proceed if:
         // - tile_type_mode == 1 (semisparse tiles only), OR
@@ -713,7 +713,7 @@
             return StatusCode::Success;
         }
         if (fact_variant > 3) {
-            std::fprintf(stderr, "ERROR: Unsupported factorization_variant %d\n", fact_variant);
+            sTiles::Logger::errorf("Unsupported factorization_variant %d", fact_variant);
             exit(0);
             return StatusCode::InvalidArgument;
         }
@@ -726,7 +726,7 @@
 
         scheme->semisparseTileMetaCore = TileMemoryManager::allocate<SemisparseTileMetaCore>(num_active, group_index);
         if (!scheme->semisparseTileMetaCore) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for semisparseTileMetaCore.\n");
+            sTiles::Logger::errorf("Memory allocation failed for semisparseTileMetaCore.");
             return StatusCode::OutOfResources;
         }
         // Construct SemisparseTileMetaCore objects (contains std::vector members)
@@ -736,7 +736,7 @@
 
         scheme->tileMetaCore = TileMemoryManager::allocate<TileMetaCore>(num_active, group_index);
         if (!scheme->tileMetaCore) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for denseTiles or tileMetaCore.\n");
+            sTiles::Logger::errorf("Memory allocation failed for denseTiles or tileMetaCore.");
             return StatusCode::OutOfResources;
         }
 
@@ -760,33 +760,33 @@
         // DEBUG: Print first 40 tiles
         // {
         //     const int num_to_print = std::min(40, scheme->numActiveTiles);
-        //     std::fprintf(stderr, "\n========== DEBUG: First %d Semisparse Tiles ==========\n", num_to_print);
+        //     sTiles::Logger::errorf("\n========== DEBUG: First %d Semisparse Tiles ==========", num_to_print);
 
         //     for (int t = 0; t < num_to_print; ++t) {
         //         const SemisparseTileMetaCore& semi = scheme->semisparseTileMetaCore[t];
         //         const bool is_diag = scheme->diagonal_bmapper ? scheme->diagonal_bmapper[t] : false;
 
-        //         std::fprintf(stderr, "\n--- Tile %d [%s] ---\n", t, is_diag ? "DIAGONAL" : "OFF-DIAG");
-        //         std::fprintf(stderr, "  fa=%d, la=%d, sa=%d, upper_bw=%d\n",
+        //         sTiles::Logger::errorf("\n--- Tile %d [%s] ---", t, is_diag ? "DIAGONAL" : "OFF-DIAG");
+        //         sTiles::Logger::errorf("  fa=%d, la=%d, sa=%d, upper_bw=%d",
         //                      semi.fa, semi.la, semi.sa, semi.upper_bw);
 
         //         // Print acol
-        //         std::fprintf(stderr, "  acol[%zu]: ", semi.acol.size());
+        //         sTiles::Logger::errorf("  acol[%zu]: ", semi.acol.size());
         //         for (std::size_t c = 0; c < semi.acol.size() && c < 20; ++c) {
-        //             std::fprintf(stderr, "%d ", semi.acol[c]);
+        //             sTiles::Logger::errorf("%d ", semi.acol[c]);
         //         }
-        //         if (semi.acol.size() > 20) std::fprintf(stderr, "...");
-        //         std::fprintf(stderr, "\n");
+        //         if (semi.acol.size() > 20) sTiles::Logger::errorf("...");
+        //         sTiles::Logger::errorf("");
 
         //         // Print aind
-        //         std::fprintf(stderr, "  aind[%zu]: ", semi.aind.size());
+        //         sTiles::Logger::errorf("  aind[%zu]: ", semi.aind.size());
         //         for (std::size_t i = 0; i < semi.aind.size() && i < 20; ++i) {
-        //             std::fprintf(stderr, "%d ", semi.aind[i]);
+        //             sTiles::Logger::errorf("%d ", semi.aind[i]);
         //         }
-        //         if (semi.aind.size() > 20) std::fprintf(stderr, "...");
-        //         std::fprintf(stderr, "\n");
+        //         if (semi.aind.size() > 20) sTiles::Logger::errorf("...");
+        //         sTiles::Logger::errorf("");
         //     }
-        //     std::fprintf(stderr, "\n========== END DEBUG ==========\n\n");
+        //     sTiles::Logger::errorf("\n========== END DEBUG ==========");
         //     //std::exit(0);
         // }
 
@@ -795,7 +795,7 @@
         const double _t_csc_start = omp_get_wtime();
         if (scheme->L_colptr && scheme->L_rowind && num_active > 0) {
             const int ts = scheme->tile_size;
-            const int* L_cp = scheme->L_colptr;
+            const int64_t* L_cp = scheme->L_colptr;
             const int* L_ri = scheme->L_rowind;
             const int n_global = scheme->dim;
             // Use max of passed num_cores and system procs — this setup phase is
@@ -837,8 +837,8 @@
                     // Pass 1: count nnz per packed column
                     std::vector<int> col_cnt(static_cast<std::size_t>(sa), 0);
                     for (int gc = r0; gc < r1 && gc < n_global; ++gc) {
-                        const int p_end = L_cp[gc + 1];
-                        for (int p = L_cp[gc]; p < p_end; ++p) {
+                        const int64_t p_end = L_cp[gc + 1];
+                        for (int64_t p = L_cp[gc]; p < p_end; ++p) {
                             const int gr = L_ri[p];
                             if (gr >= c0 && gr < c1) {
                                 const int local_col = gr - c0;
@@ -862,8 +862,8 @@
                     std::fill(col_cnt.begin(), col_cnt.end(), 0);
                     for (int gc = r0; gc < r1 && gc < n_global; ++gc) {
                         const int row_r = gc - r0;
-                        const int p_end = L_cp[gc + 1];
-                        for (int p = L_cp[gc]; p < p_end; ++p) {
+                        const int64_t p_end = L_cp[gc + 1];
+                        for (int64_t p = L_cp[gc]; p < p_end; ++p) {
                             const int gr = L_ri[p];
                             if (gr >= c0 && gr < c1) {
                                 const int local_col = gr - c0;
@@ -884,8 +884,8 @@
                     semi.csc_colptr.push_back(0);
                     for (int gc = c0; gc < c1 && gc < n_global; ++gc) {
                         const int start_sz = static_cast<int>(semi.csc_rowind.size());
-                        const int p_end = L_cp[gc + 1];
-                        for (int p = L_cp[gc]; p < p_end; ++p) {
+                        const int64_t p_end = L_cp[gc + 1];
+                        for (int64_t p = L_cp[gc]; p < p_end; ++p) {
                             const int gr = L_ri[p];
                             if (gr >= r0 && gr < r1) {
                                 semi.csc_rowind.push_back(gr - r0);
@@ -918,7 +918,7 @@
             // High (clustered active cols, e.g. sem_n*) -> semisparse; low (scattered) -> sparse.
             const double mean_occ = occ_tiles > 0 ? occ_sum / occ_tiles : 0.0;   // in (0,1]
             if (std::getenv("STILES_PRINT_OCC"))
-                fprintf(stderr, "[occ] mean_tile_occupancy=%.4f active_tiles=%lld avg_csc_density=%.1f%%\n",
+                sTiles::Logger::errorf("[occ] mean_tile_occupancy=%.4f active_tiles=%lld avg_csc_density=%.1f%%",
                         mean_occ, occ_tiles, avg_density);
             sTiles::Logger::timing("│   ↪ Per-tile CSC built: tiles="
                 + std::to_string(num_active)
@@ -1126,8 +1126,7 @@
             arena[static_cast<std::size_t>(set_idx)] =
                 TileMemoryManager::allocateZero<double>(total_elems, group_index);
             if (!arena[static_cast<std::size_t>(set_idx)]) {
-                std::fprintf(stderr,
-                    "ERROR: arena allocation failed for tile_set %d (%zu doubles).\n",
+                sTiles::Logger::errorf("arena allocation failed for tile_set %d (%zu doubles).",
                     set_idx, total_elems);
                 // Leave tiles[idx] = nullptr for this set; kernels guard on it.
             }
@@ -1249,8 +1248,7 @@
             arena[static_cast<std::size_t>(set_idx)] =
                 TileMemoryManager::allocate<double>(total_elems, group_index);
             if (!arena[static_cast<std::size_t>(set_idx)]) {
-                std::fprintf(stderr,
-                    "ERROR: arena allocation failed for inverse tile_set %d (%zu doubles).\n",
+                sTiles::Logger::errorf("arena allocation failed for inverse tile_set %d (%zu doubles).",
                     set_idx, total_elems);
             }
         }
@@ -1327,7 +1325,7 @@
         //   0 = dense: all inverse tiles are full h×w
         //   1 = semisparse: diagonal tiles are DENSE, off-diagonal tiles use active-cols format
         int* params = sTiles_get_params();
-        const int inverse_storage_mode = params ? params[7] : 0;
+        const int inverse_storage_mode = params ? params[sTiles::param::InverseStorageMode] : 0;
         const bool semisparse_offdiag = (inverse_storage_mode == 1);
 
         int diag_count = 0;
@@ -1377,8 +1375,8 @@
     inline StatusCode allocate_semisparse_tiles(TiledMatrix *scheme, int group_index, int num_cores) {
         // Check tile type mode and correction mode
         int* params = sTiles_get_params();
-        const int tile_type_mode = params[3];
-        const int correction_mode = params[0];
+        const int tile_type_mode = params[sTiles::param::TileTypeMode];
+        const int correction_mode = params[sTiles::param::SemisparsePruningMode];
         bool no_inverse = false;
 
         // Only proceed if:
@@ -1411,14 +1409,14 @@
 
         scheme->chunkedDenseTiles = TileMemoryManager::allocate<DenseTile>(num_active, group_index);
         if (!scheme->chunkedDenseTiles) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for chunkedDenseTiles.\n");
+            sTiles::Logger::errorf("Memory allocation failed for chunkedDenseTiles.");
             return StatusCode::OutOfResources;
         }
 
 #ifdef SPARSE_STILES
         scheme->sparseTileCSC = new (std::nothrow) sTiles::SparseTileCSC[static_cast<std::size_t>(num_active)]();
         if (!scheme->sparseTileCSC) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for sparseTileCSC.\n");
+            sTiles::Logger::errorf("Memory allocation failed for sparseTileCSC.");
             return StatusCode::OutOfResources;
         }
 #endif
@@ -1437,7 +1435,7 @@
             scheme->chunkedInverseTiles = TileMemoryManager::allocate<DenseTile>(num_active, group_index);
             scheme->chunkedSavedTiles = TileMemoryManager::allocate<DenseTile>(num_active, group_index);
             if (!scheme->chunkedInverseTiles || !scheme->chunkedSavedTiles) {
-                std::fprintf(stderr, "ERROR: Memory allocation failed for chunkedInverseTiles/chunkedSavedTiles.\n");
+                sTiles::Logger::errorf("Memory allocation failed for chunkedInverseTiles/chunkedSavedTiles.");
                 if (scheme->chunkedSavedTiles) {
                     TileMemoryManager::deallocate(scheme->chunkedSavedTiles);
                     scheme->chunkedSavedTiles = nullptr;
@@ -1459,7 +1457,7 @@
             // Check inverse storage mode: params[7]
             //   0 = dense (default): all inverse tiles use full h×w format
             //   1 = semisparse: off-diagonal inverse tiles use active-cols, diagonal stays dense
-            const int inverse_storage_mode = params[7];
+            const int inverse_storage_mode = params[sTiles::param::InverseStorageMode];
 
             // Inverse tiles allocation
             DenseTile* inv_and_saved_sets[] = { scheme->chunkedInverseTiles, scheme->chunkedSavedTiles };
@@ -1484,37 +1482,37 @@
         // DEBUG: Print first 40 tiles after aind is built
         // {
         //     const int num_to_print = std::min(40, num_active);
-        //     std::fprintf(stderr, "\n========== DEBUG: After allocate_semisparse_tiles (aind built) ==========\n");
-        //     std::fprintf(stderr, "Total active tiles: %d\n", num_active);
+        //     sTiles::Logger::errorf("\n========== DEBUG: After allocate_semisparse_tiles (aind built) ==========");
+        //     sTiles::Logger::errorf("Total active tiles: %d", num_active);
 
         //     for (int t = 0; t < num_to_print; ++t) {
         //         const SemisparseTileMetaCore& semi = scheme->semisparseTileMetaCore[t];
         //         const TileMetaCore& meta = scheme->tileMetaCore[t];
         //         const bool is_diag = scheme->diagonal_bmapper ? scheme->diagonal_bmapper[t] : false;
 
-        //         std::fprintf(stderr, "\n--- Tile %d [%s] (row=%d, col=%d, h=%d, w=%d) ---\n",
+        //         sTiles::Logger::errorf("\n--- Tile %d [%s] (row=%d, col=%d, h=%d, w=%d) ---",
         //                      t, is_diag ? "DIAGONAL" : "OFF-DIAG",
         //                      meta.row, meta.col, meta.height, meta.width);
-        //         std::fprintf(stderr, "  fa=%d, la=%d, sa=%d, upper_bw=%d\n",
+        //         sTiles::Logger::errorf("  fa=%d, la=%d, sa=%d, upper_bw=%d",
         //                      semi.fa, semi.la, semi.sa, semi.upper_bw);
 
         //         // Print acol (now contains compressed indices, not just markers)
-        //         std::fprintf(stderr, "  acol[%zu]: ", semi.acol.size());
+        //         sTiles::Logger::errorf("  acol[%zu]: ", semi.acol.size());
         //         for (std::size_t c = 0; c < semi.acol.size() && c < 20; ++c) {
-        //             std::fprintf(stderr, "%d ", semi.acol[c]);
+        //             sTiles::Logger::errorf("%d ", semi.acol[c]);
         //         }
-        //         if (semi.acol.size() > 20) std::fprintf(stderr, "...");
-        //         std::fprintf(stderr, "\n");
+        //         if (semi.acol.size() > 20) sTiles::Logger::errorf("...");
+        //         sTiles::Logger::errorf("");
 
         //         // Print aind (maps compressed index -> original column)
-        //         std::fprintf(stderr, "  aind[%zu]: ", semi.aind.size());
+        //         sTiles::Logger::errorf("  aind[%zu]: ", semi.aind.size());
         //         for (std::size_t i = 0; i < semi.aind.size() && i < 20; ++i) {
-        //             std::fprintf(stderr, "%d ", semi.aind[i]);
+        //             sTiles::Logger::errorf("%d ", semi.aind[i]);
         //         }
-        //         if (semi.aind.size() > 20) std::fprintf(stderr, "...");
-        //         std::fprintf(stderr, "\n");
+        //         if (semi.aind.size() > 20) sTiles::Logger::errorf("...");
+        //         sTiles::Logger::errorf("");
         //     }
-        //     std::fprintf(stderr, "\n========== END DEBUG (allocate_semisparse_tiles) ==========\n\n");
+        //     sTiles::Logger::errorf("\n========== END DEBUG (allocate_semisparse_tiles) ==========");
         // }
 
         return StatusCode::Ok;
@@ -1528,8 +1526,8 @@
 
         // Check tile type mode - only allocate if semisparse mode is active
         int* params = sTiles_get_params();
-        const int tile_type_mode = params[3];
-        const int correction_mode = params[0];
+        const int tile_type_mode = params[sTiles::param::TileTypeMode];
+        const int correction_mode = params[sTiles::param::SemisparsePruningMode];
 
         // Only proceed if semisparse tiles are needed
         if (!(tile_type_mode == 1 || tile_type_mode == 2 || (tile_type_mode == 0 && correction_mode > 0))) {
@@ -1553,14 +1551,14 @@
         // Allocate chunkedDenseTiles
         clone->chunkedDenseTiles = TileMemoryManager::allocate<DenseTile>(num_active, group_index);
         if (!clone->chunkedDenseTiles) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for chunkedDenseTiles (clone).\n");
+            sTiles::Logger::errorf("Memory allocation failed for chunkedDenseTiles (clone).");
             return StatusCode::OutOfResources;
         }
 
 #ifdef SPARSE_STILES
         clone->sparseTileCSC = new (std::nothrow) sTiles::SparseTileCSC[static_cast<std::size_t>(num_active)]();
         if (!clone->sparseTileCSC) {
-            std::fprintf(stderr, "ERROR: Memory allocation failed for sparseTileCSC (clone).\n");
+            sTiles::Logger::errorf("Memory allocation failed for sparseTileCSC (clone).");
             return StatusCode::OutOfResources;
         }
 #endif
@@ -1583,7 +1581,7 @@
             clone->chunkedSavedTiles = TileMemoryManager::allocate<DenseTile>(num_active, group_index);
 
             if (!clone->chunkedInverseTiles || !clone->chunkedSavedTiles) {
-                std::fprintf(stderr, "ERROR: Memory allocation failed for chunkedInverseTiles/chunkedSavedTiles (clone).\n");
+                sTiles::Logger::errorf("Memory allocation failed for chunkedInverseTiles/chunkedSavedTiles (clone).");
                 // Cleanup
                 if (clone->chunkedSavedTiles) {
                     TileMemoryManager::deallocate(clone->chunkedSavedTiles);
@@ -1606,7 +1604,7 @@
             // Check inverse storage mode: params[7]
             //   0 = dense (default): all inverse tiles use full h×w format
             //   1 = semisparse: off-diagonal inverse tiles use active-cols, diagonal stays dense
-            const int inverse_storage_mode = params[7];
+            const int inverse_storage_mode = params[sTiles::param::InverseStorageMode];
 
             DenseTile* inv_and_saved_sets[] = { clone->chunkedInverseTiles, clone->chunkedSavedTiles };
             initialize_inverse_tile_arrays(inv_and_saved_sets,

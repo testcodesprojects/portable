@@ -8,6 +8,7 @@
 #include <vector>
 #include <cstdio>
 #include <cstdlib>
+#include "../common/stiles_logger.hpp"
 
 namespace sTiles {
 
@@ -53,7 +54,7 @@ int runSuiteSparse(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, 
     (void) num_cores;
     const int dim = N - m;
     if (dim <= 0) {
-        std::fprintf(stderr, "runSuiteSparse: dim = N - m <= 0 (N = %d, m = %d)\n", N, m);
+        sTiles::Logger::errorf("runSuiteSparse: dim = N - m <= 0 (N = %d, m = %d)", N, m);
         return 1;
     }
 
@@ -119,11 +120,11 @@ int runSuiteSparse(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, 
             std::vector<int> camd_perm(dim);
             const int status = camd_order(dim, CP, RI, camd_perm.data(), control.data(), info.data(), nullptr);
             if (status != CAMD_OK && status != CAMD_OK_BUT_JUMBLED) {
-                std::fprintf(stderr, "runSuiteSparse: camd_order failed with status %d\n", status);
+                sTiles::Logger::errorf("runSuiteSparse: camd_order failed with status %d", status);
                 return 1;
             }
             if (fill_permutation_from_vector(N, dim, camd_perm, perm, iperm) != 0) {
-                std::fprintf(stderr, "runSuiteSparse: invalid permutation from CAMD\n");
+                sTiles::Logger::errorf("runSuiteSparse: invalid permutation from CAMD");
                 return 1;
             }
             return 0;
@@ -135,7 +136,7 @@ int runSuiteSparse(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, 
                 ? colamd_recommended(static_cast<int32_t>(row_idx.size()), dim, dim)
                 : ccolamd_recommended(static_cast<int32_t>(row_idx.size()), dim, dim);
             if (recommended == 0) {
-                std::fprintf(stderr, "runSuiteSparse: %s recommended workspace failed\n",
+                sTiles::Logger::errorf("runSuiteSparse: %s recommended workspace failed",
                               strategy == SuiteSparseStrategy::COLAMD ? "colamd" : "ccolamd");
                 return 1;
             }
@@ -150,7 +151,7 @@ int runSuiteSparse(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, 
                 colamd_set_defaults(knobs);
                 success = colamd(dim, dim, static_cast<int>(recommended), A_data.data(), p_data.data(), knobs, stats);
                 if (!success) {
-                    std::fprintf(stderr, "runSuiteSparse: colamd failed with status %d\n", stats[COLAMD_STATUS]);
+                    sTiles::Logger::errorf("runSuiteSparse: colamd failed with status %d", stats[COLAMD_STATUS]);
                     return 1;
                 }
             } else {
@@ -159,7 +160,7 @@ int runSuiteSparse(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, 
                 ccolamd_set_defaults(knobs);
                 success = ccolamd(dim, dim, static_cast<int>(recommended), A_data.data(), p_data.data(), knobs, stats, nullptr);
                 if (!success) {
-                    std::fprintf(stderr, "runSuiteSparse: ccolamd failed with status %d\n", stats[CCOLAMD_STATUS]);
+                    sTiles::Logger::errorf("runSuiteSparse: ccolamd failed with status %d", stats[CCOLAMD_STATUS]);
                     return 1;
                 }
             }
@@ -169,7 +170,7 @@ int runSuiteSparse(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, 
                 perm_vec[i] = p_data[i];
             }
             if (fill_permutation_from_vector(N, dim, perm_vec, perm, iperm) != 0) {
-                std::fprintf(stderr, "runSuiteSparse: invalid permutation from %s\n",
+                sTiles::Logger::errorf("runSuiteSparse: invalid permutation from %s",
                               strategy == SuiteSparseStrategy::COLAMD ? "colamd" : "ccolamd");
                 return 1;
             }
@@ -186,12 +187,12 @@ int runSuiteSparse(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, 
             const int status = symamd(dim, A_copy.data(), p_copy.data(), perm_vec.data(), knobs, stats,
                                       suitesparse_allocate, suitesparse_release);
             if (!status) {
-                std::fprintf(stderr, "runSuiteSparse: symamd failed with status %d\n", stats[COLAMD_STATUS]);
+                sTiles::Logger::errorf("runSuiteSparse: symamd failed with status %d", stats[COLAMD_STATUS]);
                 return 1;
             }
             perm_vec.resize(dim);
             if (fill_permutation_from_vector(N, dim, perm_vec, perm, iperm) != 0) {
-                std::fprintf(stderr, "runSuiteSparse: invalid permutation from symamd\n");
+                sTiles::Logger::errorf("runSuiteSparse: invalid permutation from symamd");
                 return 1;
             }
             return 0;
@@ -205,11 +206,11 @@ int runSuiteSparse(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, 
             std::vector<int> amd_perm(dim);
             const int status = amd_order(dim, CP, RI, amd_perm.data(), control.data(), info.data());
             if (status != AMD_OK && status != AMD_OK_BUT_JUMBLED) {
-                std::fprintf(stderr, "runSuiteSparse: amd_order failed with status %d\n", status);
+                sTiles::Logger::errorf("runSuiteSparse: amd_order failed with status %d", status);
                 return 1;
             }
             if (fill_permutation_from_vector(N, dim, amd_perm, perm, iperm) != 0) {
-                std::fprintf(stderr, "runSuiteSparse: invalid permutation from AMD\n");
+                sTiles::Logger::errorf("runSuiteSparse: invalid permutation from AMD");
                 return 1;
             }
             return 0;
@@ -224,7 +225,7 @@ int runSuiteSparse(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, 
 namespace sTiles {
 int runSuiteSparse(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, int** iperm, int num_cores, int strategy_num, const SharedAdjCSR* shared) {
     (void) csr_i; (void) csr_j; (void) N; (void) nnz; (void) m; (void) perm; (void) iperm; (void) num_cores; (void) strategy_num; (void) shared;
-    std::fprintf(stderr, "runSuiteSparse: SuiteSparse support not enabled in this build.\n");
+    sTiles::Logger::errorf("runSuiteSparse: SuiteSparse support not enabled in this build.");
     return 1;
 }
 }

@@ -184,11 +184,11 @@ void dpotrf_expansion_from_chol_tasks(TiledMatrix *tiledMatrix, stiles_context_t
 
     const auto &tasks = sTiles::get_chol_tasks(tiledMatrix);
     const auto &offsets = sTiles::get_chol_task_offsets(tiledMatrix);
-    const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
-    const int end   = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<int>(tasks.size());
+    const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
+    const long long end   = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<long long>(tasks.size());
 
     ss_init(num_tiles_per_dim, num_tiles_per_dim, 0);
-    for (int idx = start; idx < end; ++idx) {
+    for (long long idx = start; idx < end; ++idx) {
         const std::array<int,7> &t = tasks[idx];
         const int myroutine = t[0];
         const int m = t[1];
@@ -416,13 +416,13 @@ void dpotrf_reduction_from_chol_tasks(TiledMatrix *tiledMatrix, stiles_context_t
 
     const auto &tasks = sTiles::get_chol_tasks(tiledMatrix);
     const auto &offsets = sTiles::get_chol_task_offsets(tiledMatrix);
-    const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
-    const int end   = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<int>(tasks.size());
+    const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
+    const long long end   = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<long long>(tasks.size());
     sTiles::Logger::info("│   [ESMAIL_CHECK] dpotrf_reduction_from_chol_tasks: rank=" + std::to_string(rank) +
                          ", tasks=[" + std::to_string(start) + "," + std::to_string(end) + ")");
 
     ss_init(num_tiles_per_dim, num_tiles_per_dim, 0);
-    for (int idx = start; idx < end; ++idx) {
+    for (long long idx = start; idx < end; ++idx) {
         const std::array<int,7> &t = tasks[idx];
         const int myroutine = t[0];
         const int m = t[1];
@@ -1051,11 +1051,11 @@ void pdpotrf(stiles_context_t *stile) {
 
 //     const auto &tasks = tiledMatrix->chol_tasks;
 //     const auto &offsets = tiledMatrix->chol_task_offsets;
-//     const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
-//     const int end   = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<int>(tasks.size());
+//     const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
+//     const long long end   = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<long long>(tasks.size());
 
 //     ss_init(num_tiles_per_dim, num_tiles_per_dim, 0);
-//     for (int idx = start; idx < end; ++idx) {
+//     for (long long idx = start; idx < end; ++idx) {
 //         const std::array<int,7> &t = tasks[idx];
 //         const int myroutine = t[0];
 //         const int m = t[1];
@@ -1250,11 +1250,11 @@ void pdpotrf(stiles_context_t *stile) {
 
 //     const auto &tasks = tiledMatrix->chol_tasks;
 //     const auto &offsets = tiledMatrix->chol_task_offsets;
-//     const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
-//     const int end   = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<int>(tasks.size());
+//     const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
+//     const long long end   = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<long long>(tasks.size());
 
 //     ss_init(num_tiles_per_dim, num_tiles_per_dim, 0);
-//     for (int idx = start; idx < end; ++idx) {
+//     for (long long idx = start; idx < end; ++idx) {
 //         const std::array<int,7> &t = tasks[idx];
 //         const int myroutine = t[0];
 //         const int m = t[1];
@@ -1588,11 +1588,11 @@ void pdpotrf(stiles_context_t *stile) {
 
 //     const auto &tasks = tiledMatrix->chol_tasks;
 //     const auto &offsets = tiledMatrix->chol_task_offsets;
-//     const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
-//     const int end   = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<int>(tasks.size());
+//     const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
+//     const long long end   = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<long long>(tasks.size());
 
 //     ss_init(num_tiles_per_dim, num_tiles_per_dim, 0);
-//     for (int idx = start; idx < end; ++idx) {
+//     for (long long idx = start; idx < end; ++idx) {
 //         const std::array<int,7> &t = tasks[idx];
 //         const int myroutine = t[0];
 //         const int m = t[1];

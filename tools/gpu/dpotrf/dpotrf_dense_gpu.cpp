@@ -280,8 +280,8 @@ void gpu_dpotrf_expansion_dense_parallel(TiledMatrix*          scheme,
 
     const auto& tasks   = sTiles::get_chol_tasks(scheme);
     const auto& offsets = sTiles::get_chol_task_offsets(scheme);
-    const int start = (rank < (int)offsets.size())     ? offsets[rank]     : 0;
-    const int end   = (rank + 1 < (int)offsets.size()) ? offsets[rank + 1] : (int)tasks.size();
+    const long long start = (rank < (int)offsets.size())     ? offsets[rank]     : 0;
+    const long long end   = (rank + 1 < (int)offsets.size()) ? offsets[rank + 1] : (long long)tasks.size();
 
     cudaStream_t stream = ctx.streams[rank % ctx.num_streams];
 
@@ -290,7 +290,7 @@ void gpu_dpotrf_expansion_dense_parallel(TiledMatrix*          scheme,
 
     ss_init(nt, nt, 0);
 
-    for (int idx = start; idx < end; ++idx) {
+    for (long long idx = start; idx < end; ++idx) {
         const std::array<int,7>& t = tasks[idx];
         const int rkind  = t[0];
         const int m      = t[1];
@@ -380,8 +380,8 @@ void gpu_dpotrf_expansion_dense_parallel_omp(TiledMatrix*          scheme,
 
     const auto& tasks   = sTiles::get_chol_tasks(scheme);
     const auto& offsets = sTiles::get_chol_task_offsets(scheme);
-    const int start = (rank < (int)offsets.size())     ? offsets[rank]     : 0;
-    const int end   = (rank + 1 < (int)offsets.size()) ? offsets[rank + 1] : (int)tasks.size();
+    const long long start = (rank < (int)offsets.size())     ? offsets[rank]     : 0;
+    const long long end   = (rank + 1 < (int)offsets.size()) ? offsets[rank + 1] : (long long)tasks.size();
 
     cudaStream_t stream = ctx.streams[rank % ctx.num_streams];
 
@@ -390,7 +390,7 @@ void gpu_dpotrf_expansion_dense_parallel_omp(TiledMatrix*          scheme,
 
     dep_init(nt, nt, 0);
 
-    for (int idx = start; idx < end; ++idx) {
+    for (long long idx = start; idx < end; ++idx) {
         const std::array<int,7>& t = tasks[idx];
         const int rkind  = t[0];
         const int m      = t[1];

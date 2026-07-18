@@ -1,5 +1,34 @@
-#ifndef SPS_ALGO_ETREE_HPP
-#define SPS_ALGO_ETREE_HPP
+/**
+ * @file    etree.hpp
+ * @brief   Elimination tree construction and postordering for the non-uniform tile (sparse) module.
+ *
+ * @project sTiles (Sparse Tiles Library)
+ * @author  Esmail Abdul Fattah, King Abdullah University of Science and Technology (KAUST)
+ * @contact esmail.abdulfattah@kaust.edu.sa
+ * @version 3.0.0
+ * @date 1 1 2026
+ * @license Proprietary
+ *
+ * @note This file is part of the sTiles library, a proprietary software package.
+ *       Redistribution or modification without prior permission is prohibited.
+ *
+ * Copyright (c) 2026, Esmail Abdul Fattah, KAUST. All rights reserved.
+ *
+ * @license
+ * This software is proprietary and confidential. Unauthorized copying, distribution, or modification
+ * of this software, via any medium, is strictly prohibited. Permission is granted to use the software
+ * in binary form for non-commercial purposes only, provided that this copyright notice and permission
+ * notice are included in all copies or substantial portions of the software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+ * NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+#ifndef _STILES_SPARSE_ETREE_HPP_
+#define _STILES_SPARSE_ETREE_HPP_
 
 #include <cstdint>
 #include <vector>
@@ -18,16 +47,16 @@ using Ptr = int64_t;
 // so callers either supply expanded = true or call CscLower::expand() before
 // passing it in.
 struct CscLower {
-  Int             size = 0;       // n
-  bool            expanded = false;
-  std::vector<Ptr> colptr;        // size n+1, 1-based
-  std::vector<Idx> rowind;        // 1-based row indices
-  std::vector<double> nzval;      // optional; aligns with rowind. Empty if
-                                  // only the symbolic pattern is needed.
+    Int             size = 0;       // n
+    bool            expanded = false;
+    std::vector<Ptr> colptr;        // size n+1, 1-based
+    std::vector<Idx> rowind;        // 1-based row indices
+    std::vector<double> nzval;      // optional; aligns with rowind. Empty if
+                                                                    // only the symbolic pattern is needed.
 
-  // Turn lower-only structure into a full symmetric pattern.
-  // If `nzval` is populated, mirrored entries get the same value.
-  void expand();
+    // Turn lower-only structure into a full symmetric pattern.
+    // If `nzval` is populated, mirrored entries get the same value.
+    void expand();
 };
 
 // Permutation pair, 1-based:
@@ -35,105 +64,105 @@ struct CscLower {
 //   invp[k-1] = new index of original node k
 // perm and invp must be inverses of each other.
 struct Permutation {
-  std::vector<Int> perm;
-  std::vector<Int> invp;
+    std::vector<Int> perm;
+    std::vector<Int> invp;
 
-  void set_identity(Int n);
+    void set_identity(Int n);
 
-  // Validate perm/invp are non-empty, same length, and mutual inverses.
-  // Returns true if valid. Used by tests.
-  bool validate() const;
+    // Validate perm/invp are non-empty, same length, and mutual inverses.
+    // Returns true if valid. Used by tests.
+    bool validate() const;
 
-  // Relabel this permutation by a second one given as invp2 (1-based):
-  //   new invp[i-1] = invp2[ old_invp[i-1] - 1 ]
-  // perm is rebuilt to stay the inverse of invp.
-  void relabel(const std::vector<Int>& invp2);
+    // Relabel this permutation by a second one given as invp2 (1-based):
+    //   new invp[i-1] = invp2[ old_invp[i-1] - 1 ]
+    // perm is rebuilt to stay the inverse of invp.
+    void relabel(const std::vector<Int>& invp2);
 };
 
 // Union-find forest with path compression, used while building the
 // elimination tree and while relaxing supernodes. Sets are identified by a
 // stored representative (Rep) that the caller assigns.
 class UnionFind {
- public:
-  void reset(Int n);
-  void clear();
-  Int  make(Int i)            { link_[i - 1] = i; return i; }
-  Int  attach(Int s, Int t)   { link_[s - 1] = t; return t; }
-  Int  find_root(Int i) {
-    Int p  = link_[i - 1];
-    Int gp = link_[p - 1];
-    while (gp != p) {
-      link_[gp - 1] = gp;      // compress: promote grandparent to a local root
-      i  = gp;
-      p  = link_[i - 1];
-      gp = link_[p - 1];
+  public:
+    void reset(Int n);
+    void clear();
+    Int  make(Int i)            { link_[i - 1] = i; return i; }
+    Int  attach(Int s, Int t)   { link_[s - 1] = t; return t; }
+    Int  find_root(Int i) {
+        Int p  = link_[i - 1];
+        Int gp = link_[p - 1];
+        while (gp != p) {
+            link_[gp - 1] = gp;      // compress: promote grandparent to a local root
+            i  = gp;
+            p  = link_[i - 1];
+            gp = link_[p - 1];
+        }
+        return p;
     }
-    return p;
-  }
-  void unite(Int s, Int t, Int rep = -1) {
-    Int tRoot = find_root(t);
-    Int sRoot = find_root(s);
-    sRoot = attach(sRoot, tRoot);
-    rep_[sRoot - 1] = (rep == -1) ? t : rep;
-  }
-  Int& rep(Int i) { return rep_[i - 1]; }
+    void unite(Int s, Int t, Int rep = -1) {
+        Int tRoot = find_root(t);
+        Int sRoot = find_root(s);
+        sRoot = attach(sRoot, tRoot);
+        rep_[sRoot - 1] = (rep == -1) ? t : rep;
+    }
+    Int& rep(Int i) { return rep_[i - 1]; }
 
- private:
-  std::vector<Int> link_;
-  std::vector<Int> rep_;
+  private:
+    std::vector<Int> link_;
+    std::vector<Int> rep_;
 };
 
 // Elimination tree of the *permuted* matrix P A P^T.
 // Single-process implementation.
 class EliminationTree {
- public:
-  EliminationTree() = default;
+  public:
+    EliminationTree() = default;
 
-  // Build the parent array for the elimination tree of P A P^T, where the
-  // symmetric expanded graph is `g` and P is given by `perm`. `g.expanded`
-  // must be true.
-  void build(const CscLower& g, const Permutation& perm);
+    // Build the parent array for the elimination tree of P A P^T, where the
+    // symmetric expanded graph is `g` and P is given by `perm`. `g.expanded`
+    // must be true.
+    void build(const CscLower& g, const Permutation& perm);
 
-  // Post-order the tree, folding the post-order permutation into `perm`.
-  // Marks the tree post-ordered and fills the post-ordered parent array.
-  // If `relinvp` is non-null, it receives a copy of the post-order invp
-  // (n entries, 1-based).
-  void postorder(Permutation& perm, Int* relinvp = nullptr);
+    // Post-order the tree, folding the post-order permutation into `perm`.
+    // Marks the tree post-ordered and fills the post-ordered parent array.
+    // If `relinvp` is non-null, it receives a copy of the post-order invp
+    // (n entries, 1-based).
+    void postorder(Permutation& perm, Int* relinvp = nullptr);
 
-  // Reorder the children of each node by descending weight `weight`
-  // (column count). Folds the resulting permutation into `perm` and updates
-  // the post-ordered parent array and `weight`. Post-orders the tree first if
-  // it is not yet post-ordered.
-  void reorder_children(std::vector<Int>& weight, Permutation& perm);
+    // Reorder the children of each node by descending weight `weight`
+    // (column count). Folds the resulting permutation into `perm` and updates
+    // the post-ordered parent array and `weight`. Post-orders the tree first if
+    // it is not yet post-ordered.
+    void reorder_children(std::vector<Int>& weight, Permutation& perm);
 
-  // Lift the tree to supernode granularity.
-  //   first_col[ksup-1..ksup] defines the column range of supernode ksup.
-  //   col_super[c-1]          is the supernode that owns column c.
-  // Requires *this is post-ordered.
-  EliminationTree supernodal_tree(const std::vector<Int>& first_col,
-                                  const std::vector<Int>& col_super) const;
+    // Lift the tree to supernode granularity.
+    //   first_col[ksup-1..ksup] defines the column range of supernode ksup.
+    //   col_super[c-1]          is the supernode that owns column c.
+    // Requires *this is post-ordered.
+    EliminationTree supernodal_tree(const std::vector<Int>& first_col,
+                                    const std::vector<Int>& col_super) const;
 
-  bool is_postordered() const  { return postordered_; }
-  Int  n() const               { return n_; }
-  Int  size() const            { return static_cast<Int>(parent_idx_.size()); }
-  Int  parent_of(Int i) const      { return parent_idx_[i]; }      // 0-based
-  Int  post_parent_of(Int i) const { return post_parent_idx_[i]; } // index in
-  const std::vector<Int>& parents() const      { return parent_idx_; }
-  const std::vector<Int>& post_parents() const { return post_parent_idx_; }
+    bool is_postordered() const  { return postordered_; }
+    Int  n() const               { return n_; }
+    Int  size() const            { return static_cast<Int>(parent_idx_.size()); }
+    Int  parent_of(Int i) const      { return parent_idx_[i]; }      // 0-based
+    Int  post_parent_of(Int i) const { return post_parent_idx_[i]; } // index in
+    const std::vector<Int>& parents() const      { return parent_idx_; }
+    const std::vector<Int>& post_parents() const { return post_parent_idx_; }
 
- private:
-  // DFS post-order of the first-child / next-sibling forest. Fills
-  // new_pos[0..n-1] with 1-based post-order positions.
-  void dfs_postorder(const std::vector<Int>& first_child,
-                     const std::vector<Int>& next_sibling,
-                     std::vector<Int>& new_pos) const;
+  private:
+    // DFS post-order of the first-child / next-sibling forest. Fills
+    // new_pos[0..n-1] with 1-based post-order positions.
+    void dfs_postorder(const std::vector<Int>& first_child,
+                       const std::vector<Int>& next_sibling,
+                       std::vector<Int>& new_pos) const;
 
-  Int              n_ = 0;
-  bool             postordered_ = false;
-  std::vector<Int> parent_idx_;       // 1-based parents, 0 = root
-  std::vector<Int> post_parent_idx_;  // post-ordered parents (1-based, 0 = root)
+    Int              n_ = 0;
+    bool             postordered_ = false;
+    std::vector<Int> parent_idx_;       // 1-based parents, 0 = root
+    std::vector<Int> post_parent_idx_;  // post-ordered parents (1-based, 0 = root)
 };
 
 }}  // namespace sTiles::sparse
 
-#endif  // SPS_ALGO_ETREE_HPP
+#endif  // _STILES_SPARSE_ETREE_HPP_

@@ -1,5 +1,34 @@
-#ifndef SPS_ALGO_SYMBOLIC_HPP
-#define SPS_ALGO_SYMBOLIC_HPP
+/**
+ * @file    symbolic.hpp
+ * @brief   Symbolic factorization for the sparse module: column/row counts and factor pattern.
+ *
+ * @project sTiles (Sparse Tiles Library)
+ * @author  Esmail Abdul Fattah, King Abdullah University of Science and Technology (KAUST)
+ * @contact esmail.abdulfattah@kaust.edu.sa
+ * @version 3.0.0
+ * @date 1 1 2026
+ * @license Proprietary
+ *
+ * @note This file is part of the sTiles library, a proprietary software package.
+ *       Redistribution or modification without prior permission is prohibited.
+ *
+ * Copyright (c) 2026, Esmail Abdul Fattah, KAUST. All rights reserved.
+ *
+ * @license
+ * This software is proprietary and confidential. Unauthorized copying, distribution, or modification
+ * of this software, via any medium, is strictly prohibited. Permission is granted to use the software
+ * in binary form for non-commercial purposes only, provided that this copyright notice and permission
+ * notice are included in all copies or substantial portions of the software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+ * NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+#ifndef _STILES_SPARSE_SYMBOLIC_HPP_
+#define _STILES_SPARSE_SYMBOLIC_HPP_
 
 #include "etree.hpp"
 
@@ -10,16 +39,16 @@ namespace sTiles { namespace sparse {
 
 // Knobs controlling supernode formation and relaxation.
 struct SymbolicOptions {
-  // Hard cap on supernode width passed to the supernode detector. 0 = unbounded.
-  Int relax_max_size = 0;
+    // Hard cap on supernode width passed to the supernode detector. 0 = unbounded.
+    Int relax_max_size = 0;
 
-  // Relaxation thresholds. Setting nrelax0 = 0 disables all merging.
-  Int    nrelax0 = 8;
-  Int    nrelax1 = 32;
-  Int    nrelax2 = 64;
-  double zrelax0 = 0.8;
-  double zrelax1 = 0.1;
-  double zrelax2 = 0.05;
+    // Relaxation thresholds. Setting nrelax0 = 0 disables all merging.
+    Int    nrelax0 = 8;
+    Int    nrelax1 = 32;
+    Int    nrelax2 = 64;
+    double zrelax0 = 0.8;
+    double zrelax1 = 0.1;
+    double zrelax2 = 0.05;
 };
 
 // Output of compute_symbolic. All index arrays are 1-based.
@@ -41,18 +70,18 @@ struct SymbolicOptions {
 //              every supernode column, not just the leading column).
 //   row_pattern_len   : row_pattern.size(), i.e. the supernode-packed row count.
 struct Symbolic {
-  Int n       = 0;
-  Int n_super = 0;
-  Permutation      ordering;
-  EliminationTree  etree;
-  EliminationTree  sn_etree;
-  std::vector<Int> supernode_first_col;
-  std::vector<Int> supernode_of_col;
-  std::vector<Ptr> row_pattern_ptr;
-  std::vector<Idx> row_pattern;
-  std::vector<Int> col_count;
-  Ptr              nnz_l  = 0;
-  Ptr              row_pattern_len = 0;
+    Int n       = 0;
+    Int n_super = 0;
+    Permutation      ordering;
+    EliminationTree  etree;
+    EliminationTree  sn_etree;
+    std::vector<Int> supernode_first_col;
+    std::vector<Int> supernode_of_col;
+    std::vector<Ptr> row_pattern_ptr;
+    std::vector<Idx> row_pattern;
+    std::vector<Int> col_count;
+    Ptr              nnz_l  = 0;
+    Ptr              row_pattern_len = 0;
 };
 
 // Run the full symbolic factorization. `A_lower` is the lower-triangular CSC
@@ -70,4 +99,4 @@ void compute_symbolic(const CscLower&        A_lower,
 
 }}  // namespace sTiles::sparse
 
-#endif  // SPS_ALGO_SYMBOLIC_HPP
+#endif  // _STILES_SPARSE_SYMBOLIC_HPP_

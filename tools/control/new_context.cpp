@@ -182,13 +182,13 @@ StatusCode Context::tune(Function func, Size M, Size N, Size NRHS, Int tile_size
 
 void Context::warning(const char* function_name, const char* message) const {
     if (data->warnings_enabled) {
-        std::cerr << "STILES WARNING: " << function_name << "(): " << message << std::endl;
+        sTiles::Logger::warning(function_name, "(): ", message);
     }
 }
 
 void Context::error(const char* function_name, const char* message) const {
     if (data->errors_enabled) {
-        std::cerr << "STILES ERROR: " << function_name << "(): " << message << std::endl;
+        sTiles::Logger::error(function_name, "(): ", message);
     }
 }
 

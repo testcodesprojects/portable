@@ -28,6 +28,8 @@
 #include <array>
 #include <memory>
 #include <string>
+
+#include "stiles_params.hpp"   // named control-parameter indices (sTiles::param::*)
 #include <atomic>
 
 namespace sTiles {
@@ -70,9 +72,12 @@ namespace sTiles {
         int num_cores{0};
         int bind_index{-1};
         std::shared_ptr<std::vector<std::array<int,7>>> chol_tasks;
-        std::shared_ptr<std::vector<int>>                chol_task_offsets;
+        // 64-bit: on huge matrices the chol task count exceeds INT32_MAX, so the
+        // per-core prefix offsets into chol_tasks must be 64-bit or they wrap and
+        // the executor indexes chol_tasks out of bounds (SEGV on bern_spd).
+        std::shared_ptr<std::vector<long long>>          chol_task_offsets;
         std::shared_ptr<std::vector<std::array<int,7>>> inv_tasks;
-        std::shared_ptr<std::vector<int>>                inv_task_offsets;
+        std::shared_ptr<std::vector<long long>>          inv_task_offsets; // 64-bit: inv task count can exceed INT32_MAX
         std::shared_ptr<std::vector<std::array<int,6>>> solve_fwd_tasks;
         std::shared_ptr<std::vector<int>>                solve_fwd_offsets;
         std::shared_ptr<std::vector<std::array<int,6>>> solve_bwd_tasks;
@@ -237,6 +242,11 @@ typedef struct TiledMatrix {
     volatile unsigned char*       byte_progress_buf     = nullptr;
     std::atomic<unsigned char>*   byte_progress_buf_omp = nullptr;
     long long nnz_factor{0};        /**< Number of non-zeros in the Cholesky factor L */
+    bool preprocess_failed{false};  /**< Set true if symbolic/ordering preprocessing failed
+                                     *   for this scheme (e.g. auto-mode could not resolve a
+                                     *   tile mode, or fill-in exceeded the 2B nnz guard).
+                                     *   chol/solve/selinv/logdet refuse to run when set, so a
+                                     *   failed preprocess aborts cleanly instead of cascading. */
     bool prefer_row_layout{false};  /**< Solve-time layout choice (set by wrapper_solve):
                                      *   true  -> multi-RHS kernels run row-major B
                                      *           (API transposes col-major B in/out)
@@ -245,8 +255,12 @@ typedef struct TiledMatrix {
                                      *   Decided by fill+nnz/n heuristic — very thin
                                      *   matrices (sem_* family: fill<2 AND nnz/row<6)
                                      *   regress under row-major; everything else wins. */
-    int* L_colptr{nullptr};         /**< Column pointers of L factor, size dim+1 (CSC) */
-    int* L_rowind{nullptr};         /**< Row indices of L factor, size nnz_factor (CSC) */
+    int64_t* L_colptr{nullptr};     /**< Column pointers of L factor, size dim+1 (CSC).
+                                     *   64-bit: the cumulative offset reaches nnz_factor,
+                                     *   which exceeds INT_MAX for very large factors
+                                     *   (e.g. bern: ~6.0e9 nonzeros). */
+    int* L_rowind{nullptr};         /**< Row indices of L factor, size nnz_factor (CSC).
+                                     *   Elements are row indices (< dim), so stay 32-bit. */
     double* L_values{nullptr};      /**< Packed CSC values of L factor, size nnz_factor.
                                      *   Allocated by sTiles_packing(group, obj) after chol.
                                      *   Buffer is reused across re-packs; freshness is
@@ -289,6 +303,15 @@ typedef struct TiledMatrix {
     int fixed_column_size;               /**< Fixed column size */
     int triangular_size;                 /**< Original factor size */
     int factorization_variant;           /**< Factorization variant (0=sparse, 1=single, 2=scaled) */
+    int tile_type_mode;                  /**< RESOLVED tile mode for THIS scheme (0=dense,
+                                          *   1=semisparse, 2=non-uniform). Auto mode (3) is
+                                          *   resolved per matrix during preprocessing;
+                                          *   sTiles_preprocess_group snapshots the result here.
+                                          *   -1 = not yet resolved (set at scheme allocation).
+                                          *   Compute-phase code reads this via
+                                          *   stiles_scheme_tile_mode(), NOT the global control
+                                          *   slot [3], so groups with different resolutions can
+                                          *   run concurrently. */
     int num_cores;                     /**< Number of cores used */
     int num_gpu_streams;               /**< Number of GPU streams (= num_cores when GPU active) */
     int internal_version;        /**< Version of internal processing */
@@ -473,9 +496,9 @@ typedef struct TiledMatrix {
     int  *diagonal_mapper;
     bool *diagonal_bmapper;
     std::shared_ptr<std::vector<std::array<int,7>>> chol_tasks;
-    std::shared_ptr<std::vector<int>> chol_task_offsets;
+    std::shared_ptr<std::vector<long long>> chol_task_offsets; // 64-bit: task count can exceed INT32_MAX
     std::shared_ptr<std::vector<std::array<int,7>>> inv_tasks;
-    std::shared_ptr<std::vector<int>> inv_task_offsets;
+    std::shared_ptr<std::vector<long long>> inv_task_offsets; // 64-bit: inv task count can exceed INT32_MAX
 
     // Precomputed gather offsets for semisparse inv tasks (cases 7/8).
     // inv_gather_packed: flat buffer of int32_t data (offsets + valid indices)
@@ -539,6 +562,21 @@ typedef struct TiledMatrix {
 
 } TiledMatrix;
 
+/**
+ * Resolved tile mode for a scheme (0=dense, 1=semisparse, 2=non-uniform).
+ *
+ * Preferred accessor for COMPUTE-phase code (chol/solve/selinv/logdet): reads
+ * the per-scheme snapshot taken at the end of preprocessing, falling back to
+ * the global control slot [3] only when the snapshot is absent (mid-preprocess
+ * callers, or schemes produced by paths that predate the snapshot). The
+ * fallback keeps behavior identical to the historical global read.
+ */
+extern int stiles_control_params[];
+inline int stiles_scheme_tile_mode(const TiledMatrix* scheme) {
+    return (scheme && scheme->tile_type_mode >= 0) ? scheme->tile_type_mode
+                                                   : stiles_control_params[sTiles::param::TileTypeMode];
+}
+
 namespace sTiles {
 
 inline std::vector<std::array<int,7>>& ensure_chol_tasks(TiledMatrix* tm) {
@@ -546,8 +584,8 @@ inline std::vector<std::array<int,7>>& ensure_chol_tasks(TiledMatrix* tm) {
     return *tm->chol_tasks;
 }
 
-inline std::vector<int>& ensure_chol_task_offsets(TiledMatrix* tm) {
-    if (!tm->chol_task_offsets) tm->chol_task_offsets = std::make_shared<std::vector<int>>();
+inline std::vector<long long>& ensure_chol_task_offsets(TiledMatrix* tm) {
+    if (!tm->chol_task_offsets) tm->chol_task_offsets = std::make_shared<std::vector<long long>>();
     return *tm->chol_task_offsets;
 }
 
@@ -556,8 +594,8 @@ inline std::vector<std::array<int,7>>& ensure_inv_tasks(TiledMatrix* tm) {
     return *tm->inv_tasks;
 }
 
-inline std::vector<int>& ensure_inv_task_offsets(TiledMatrix* tm) {
-    if (!tm->inv_task_offsets) tm->inv_task_offsets = std::make_shared<std::vector<int>>();
+inline std::vector<long long>& ensure_inv_task_offsets(TiledMatrix* tm) {
+    if (!tm->inv_task_offsets) tm->inv_task_offsets = std::make_shared<std::vector<long long>>();
     return *tm->inv_task_offsets;
 }
 
@@ -569,8 +607,8 @@ inline const std::vector<std::array<int,7>>& get_chol_tasks(const TiledMatrix* t
     return tm->chol_tasks ? *tm->chol_tasks : empty;
 }
 
-inline const std::vector<int>& get_chol_task_offsets(const TiledMatrix* tm) {
-    static const std::vector<int> empty;
+inline const std::vector<long long>& get_chol_task_offsets(const TiledMatrix* tm) {
+    static const std::vector<long long> empty;
     if (!tm) return empty;
     if (tm->use_rescale.load(std::memory_order_acquire) > 0 && tm->rescale_schedule.chol_task_offsets)
         return *tm->rescale_schedule.chol_task_offsets;
@@ -585,8 +623,8 @@ inline const std::vector<std::array<int,7>>& get_inv_tasks(const TiledMatrix* tm
     return tm->inv_tasks ? *tm->inv_tasks : empty;
 }
 
-inline const std::vector<int>& get_inv_task_offsets(const TiledMatrix* tm) {
-    static const std::vector<int> empty;
+inline const std::vector<long long>& get_inv_task_offsets(const TiledMatrix* tm) {
+    static const std::vector<long long> empty;
     if (!tm) return empty;
     if (tm->use_rescale.load(std::memory_order_acquire) > 0 && tm->rescale_schedule.inv_task_offsets)
         return *tm->rescale_schedule.inv_task_offsets;

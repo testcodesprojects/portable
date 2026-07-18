@@ -9,6 +9,7 @@
 #include <cstring>
 #include <algorithm>
 #include <numeric>
+#include "../common/stiles_logger.hpp"
 
 extern "C" {
     void amdbar_(int* N, int* PE, int* IW, int* LEN, int* IWLEN, int* PFREE,
@@ -79,7 +80,7 @@ void stiles_runAMDBAR(int* csr_i, int* csr_j, int N, int nnz,
         (*perm)[(*iperm)[i]] = i;
 
     if (NCMPA > 0)
-        fprintf(stderr, "[AMDBAR] %d garbage collections during ordering (N=%d)\n", NCMPA, N);
+        sTiles::Logger::errorf("[AMDBAR] %d garbage collections during ordering (N=%d)", NCMPA, N);
 }
 
 } // namespace sTiles

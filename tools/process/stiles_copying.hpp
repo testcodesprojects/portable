@@ -20,12 +20,12 @@ namespace sTiles {namespace SafeMode{
 int copy_configuration_1(TiledMatrix **scheme_0, TiledMatrix **scheme_i) {
     
     if (!scheme_0 || !*scheme_0) {
-        fprintf(stderr, "Error: Source scheme is null.\n");
+        sTiles::Logger::errorf("Source scheme is null.");
         return -1; // Failure
     }
 
     if (!scheme_i || !*scheme_i) {
-        fprintf(stderr, "Error: Source scheme is null.\n");
+        sTiles::Logger::errorf("Source scheme is null.");
         return -1; // Failure
     }
 
@@ -66,12 +66,12 @@ int copy_configuration_1(TiledMatrix **scheme_0, TiledMatrix **scheme_i) {
 int copy_configuration_2(TiledMatrix **scheme_0, TiledMatrix **scheme_i) {
     
     if (!scheme_0 || !*scheme_0) {
-        fprintf(stderr, "Error: Source scheme is null.\n");
+        sTiles::Logger::errorf("Source scheme is null.");
         return -1; // Failure
     }
 
     if (!scheme_i || !*scheme_i) {
-        fprintf(stderr, "Error: Source scheme is null.\n");
+        sTiles::Logger::errorf("Source scheme is null.");
         return -1; // Failure
     }
 
@@ -95,7 +95,7 @@ int copy_configuration_2(TiledMatrix **scheme_0, TiledMatrix **scheme_i) {
 int copy_configuration_3(TiledMatrix **scheme_0, TiledMatrix **scheme_i) {
     
     if (!scheme_0 || !*scheme_0 || !scheme_i || !*scheme_i) {
-        fprintf(stderr, "Error: sTiles_copy_configuration_3 received a null scheme pointer.\n");
+        sTiles::Logger::errorf("sTiles_copy_configuration_3 received a null scheme pointer.");
         return -1;
     }
     
@@ -124,11 +124,11 @@ namespace sTiles {
 
 inline int copy_configuration_1(TiledMatrix **scheme_0, TiledMatrix **scheme_i) {
     if (!scheme_0 || !*scheme_0) {
-        fprintf(stderr, "Error: Source scheme is null.\n");
+        sTiles::Logger::errorf("Source scheme is null.");
         return -1;
     }
     if (!scheme_i || !*scheme_i) {
-        fprintf(stderr, "Error: Destination scheme is null.\n");
+        sTiles::Logger::errorf("Destination scheme is null.");
         return -1;
     }
 
@@ -167,11 +167,11 @@ inline int copy_configuration_1(TiledMatrix **scheme_0, TiledMatrix **scheme_i) 
 
 inline int copy_configuration_2(TiledMatrix **scheme_0, TiledMatrix **scheme_i) {
     if (!scheme_0 || !*scheme_0) {
-        fprintf(stderr, "Error: Source scheme is null.\n");
+        sTiles::Logger::errorf("Source scheme is null.");
         return -1;
     }
     if (!scheme_i || !*scheme_i) {
-        fprintf(stderr, "Error: Destination scheme is null.\n");
+        sTiles::Logger::errorf("Destination scheme is null.");
         return -1;
     }
 
@@ -190,7 +190,7 @@ inline int copy_configuration_2(TiledMatrix **scheme_0, TiledMatrix **scheme_i) 
 
 inline int copy_configuration_3(TiledMatrix **scheme_0, TiledMatrix **scheme_i) {
     if (!scheme_0 || !*scheme_0 || !scheme_i || !*scheme_i) {
-        fprintf(stderr, "Error: copy_configuration_3 received a null scheme pointer.\n");
+        sTiles::Logger::errorf("copy_configuration_3 received a null scheme pointer.");
         return -1;
     }
     (*scheme_i)->tree_counter = (*scheme_0)->tree_counter;
@@ -199,7 +199,7 @@ inline int copy_configuration_3(TiledMatrix **scheme_0, TiledMatrix **scheme_i) 
 
 inline int copy_configuration_4(TiledMatrix **scheme_0, TiledMatrix **scheme_i) {
     if (!scheme_0 || !*scheme_0 || !scheme_i || !*scheme_i) {
-        fprintf(stderr, "Error: copy_configuration_4 received a null scheme pointer.\n");
+        sTiles::Logger::errorf("copy_configuration_4 received a null scheme pointer.");
         return -1;
     }
     (*scheme_i)->t_indicies = (*scheme_0)->t_indicies;

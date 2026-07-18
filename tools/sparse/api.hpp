@@ -30,6 +30,15 @@
  *   - User permutation always — sTiles' ordering pipeline
  *     (tools/ordering/stiles_ordering.hpp) supplies it via
  *     `scheme->element_perm`; the module never picks its own.
+ *
+ * @project sTiles (Sparse Tiles Library)
+ * @author  Esmail Abdul Fattah, King Abdullah University of Science and Technology (KAUST)
+ * @contact esmail.abdulfattah@kaust.edu.sa
+ * @version 3.0.0
+ * @date 1 1 2026
+ * @license Proprietary
+ *
+ * Copyright (c) 2026, Esmail Abdul Fattah, KAUST. All rights reserved.
  */
 
 #ifndef _STILES_SPARSE_API_HPP_

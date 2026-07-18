@@ -24,6 +24,7 @@
 #include "../common/stiles_utils.hpp"
 #include "stiles_types.hpp"
 #include "core_kernels.hpp"
+#include "../common/stiles_logger.hpp"
 
 
 namespace sTiles {
@@ -31,32 +32,32 @@ namespace sTiles {
     StatusCode core_dgeadd(Op transa, i32 m, i32 n, f64 alpha, const f64* A, i32 lda, f64 beta, f64* B, i32 ldb)
     {
         if (transa != Op::NoTrans && transa != Op::Trans && transa != Op::ConjTrans) {
-            std::fprintf(stderr, "illegal value of transa\n");
+            sTiles::Logger::errorf("illegal value of transa");
             return StatusCode::IllegalValue;
         }
         if (m < 0) {
-            std::fprintf(stderr, "illegal value of m\n");
+            sTiles::Logger::errorf("illegal value of m");
             return StatusCode::IllegalValue;
         }
         if (n < 0) {
-            std::fprintf(stderr, "illegal value of n\n");
+            sTiles::Logger::errorf("illegal value of n");
             return StatusCode::IllegalValue;
         }
         if (A == nullptr) {
-            std::fprintf(stderr, "NULL A\n");
+            sTiles::Logger::errorf("NULL A");
             return StatusCode::IllegalValue;
         }
         if ((transa == Op::NoTrans && lda < (m > 0 ? m : 1)) ||
             (transa != Op::NoTrans && lda < (n > 0 ? n : 1))) {
-            std::fprintf(stderr, "illegal value of lda\n");
+            sTiles::Logger::errorf("illegal value of lda");
             return StatusCode::IllegalValue;
         }
         if (B == nullptr) {
-            std::fprintf(stderr, "NULL B\n");
+            sTiles::Logger::errorf("NULL B");
             return StatusCode::IllegalValue;
         }
         if (ldb < (m > 0 ? m : 1)) {
-            std::fprintf(stderr, "illegal value of ldb\n");
+            sTiles::Logger::errorf("illegal value of ldb");
             return StatusCode::IllegalValue;
         }
 
@@ -124,13 +125,13 @@ namespace sTiles {
         else if (info > 0) {
             // This is the key case: a computational failure.
             // The leading minor of order 'info' is not positive-definite.
-            std::fprintf(stderr, "sTiles::core_dpotrf: matrix not positive-definite. Factorization failed at step %d.\n", info);
+            sTiles::Logger::errorf("sTiles::core_dpotrf: matrix not positive-definite. Factorization failed at step %d.", info);
             return StatusCode::ExecutionFailed;
         }
         else { // info < 0
             // An illegal argument was passed to the LAPACK function.
             // Our validation should catch this, but this handles it just in case.
-            std::fprintf(stderr, "sTiles::core_dpotrf: LAPACKE_dpotrf reported illegal argument at position %d\n", -info);
+            sTiles::Logger::errorf("sTiles::core_dpotrf: LAPACKE_dpotrf reported illegal argument at position %d", -info);
             return StatusCode::IllegalValue;
         }
 
@@ -181,19 +182,19 @@ namespace sTiles {
     // {
     //     // basic argument checks
     //     if (n < 0) {
-    //         std::fprintf(stderr, "core_dpotrf_upper_banded: illegal value of n\n");
+    //         sTiles::Logger::errorf("core_dpotrf_upper_banded: illegal value of n");
     //         return StatusCode::IllegalValue;
     //     }
     //     if (kd < 0) {
-    //         std::fprintf(stderr, "core_dpotrf_upper_banded: illegal value of kd\n");
+    //         sTiles::Logger::errorf("core_dpotrf_upper_banded: illegal value of kd");
     //         return StatusCode::IllegalValue;
     //     }
     //     if (A == nullptr) {
-    //         std::fprintf(stderr, "core_dpotrf_upper_banded: NULL A\n");
+    //         sTiles::Logger::errorf("core_dpotrf_upper_banded: NULL A");
     //         return StatusCode::IllegalValue;
     //     }
     //     if (lda < (n > 0 ? n : 1)) {
-    //         std::fprintf(stderr, "core_dpotrf_upper_banded: illegal value of lda\n");
+    //         sTiles::Logger::errorf("core_dpotrf_upper_banded: illegal value of lda");
     //         return StatusCode::IllegalValue;
     //     }
 
@@ -266,18 +267,15 @@ namespace sTiles {
     {
         // basic checks, same style as other cores
         if (n < 0) {
-            std::fprintf(stderr,
-                         "core_dpotrf_diag_upper: illegal value of n\n");
+            sTiles::Logger::errorf("core_dpotrf_diag_upper: illegal value of n");
             return StatusCode::IllegalValue;
         }
         if (A == nullptr) {
-            std::fprintf(stderr,
-                         "core_dpotrf_diag_upper: NULL A\n");
+            sTiles::Logger::errorf("core_dpotrf_diag_upper: NULL A");
             return StatusCode::IllegalValue;
         }
         if (lda < (n > 0 ? n : 1)) {
-            std::fprintf(stderr,
-                         "core_dpotrf_diag_upper: illegal value of lda\n");
+            sTiles::Logger::errorf("core_dpotrf_diag_upper: illegal value of lda");
             return StatusCode::IllegalValue;
         }
 
@@ -288,8 +286,7 @@ namespace sTiles {
         for (i32 j = 0; j < n; ++j) {
             f64& ajj = A[j + j * lda];
             if (ajj <= 0.0) {
-                std::fprintf(stderr,
-                             "core_dpotrf_diag_upper: non positive diagonal at j = %d (ajj = %g)\n",
+                sTiles::Logger::errorf("core_dpotrf_diag_upper: non positive diagonal at j = %d (ajj = %g)",
                              (int)j, (double)ajj);
                 return StatusCode::ExecutionFailed;
             }
@@ -303,8 +300,7 @@ namespace sTiles {
     {
         const i32 ldab = kd + 1;
         if (n < 0 || kd < 0 || ab == nullptr) {
-            std::fprintf(stderr,
-                         "core_dpbtrf_upper_lapack: invalid arguments (n=%d, kd=%d, ab=%p)\n",
+            sTiles::Logger::errorf("core_dpbtrf_upper_lapack: invalid arguments (n=%d, kd=%d, ab=%p)",
                          (int)n, (int)kd, (void*)ab);
             return StatusCode::IllegalValue;
         }
@@ -328,10 +324,10 @@ namespace sTiles {
 
         if (info != 0) {
             if (info < 0) {
-                std::fprintf(stderr, "core_dpbtrf_upper_lapack: LAPACKE_dpbtrf illegal argument %d\n", (int)(-info));
+                sTiles::Logger::errorf("core_dpbtrf_upper_lapack: LAPACKE_dpbtrf illegal argument %d", (int)(-info));
                 return StatusCode::IllegalValue;
             }
-            std::fprintf(stderr, "core_dpbtrf_upper_lapack: leading minor of order %d is not positive definite\n", (int)info);
+            sTiles::Logger::errorf("core_dpbtrf_upper_lapack: leading minor of order %d is not positive definite", (int)info);
             return StatusCode::ExecutionFailed;
         }
 

@@ -96,8 +96,8 @@
 #define ss_init(m, n, init_val) \
 { \
     if (STILES_RANK == 0) { \
-        stile->ss_progress = (volatile int *)stiles_shared_alloc(stile, (m)*(n), sTilesInteger); \
-        sTiles::aux::mem_set_int(stile->ss_progress, m * n, init_val); \
+        stile->ss_progress = (volatile int *)stiles_shared_alloc(stile, (size_t)(m)*(size_t)(n), sTilesInteger); \
+        sTiles::aux::mem_set_int(stile->ss_progress, (size_t)(m) * (size_t)(n), init_val); \
     } \
     stile->ss_ld = (m); \
     stile->ss_abort = 0; \
@@ -237,7 +237,7 @@
 // #define ss_init(m, n, init_val) \
 // { \
 //     if (STILES_RANK == 0) { \
-//         stile->ss_progress = (volatile int *)stiles_shared_alloc(stile, (m)*(n), sTilesInteger); \
+//         stile->ss_progress = (volatile int *)stiles_shared_alloc(stile, (size_t)(m)*(size_t)(n), sTilesInteger); \
 //         sTiles::aux::mem_set_int(stile->ss_progress, m * n, init_val); \
 //     } \
 //     stile->ss_ld = (m); \
@@ -264,8 +264,8 @@
 #define nd_init(m, n, init_val, k) \
 { \
     if (STILES_RANK == 0) { \
-        stile->ss_progress = (volatile int *)stiles_shared_alloc(stile, (m)*(n), sTilesInteger); \
-        sTiles::aux::mem_set_int((int*)stile->ss_progress, (m)*(n), (init_val)); \
+        stile->ss_progress = (volatile int *)stiles_shared_alloc(stile, (size_t)(m)*(size_t)(n), sTilesInteger); \
+        sTiles::aux::mem_set_int((int*)stile->ss_progress, (size_t)(m)*(size_t)(n), (init_val)); \
         for (int i = 0; i <= k; i++) { \
             for (int j = i; j < n; j++) { \
                 (stile)->ss_progress[i * n + j] = 1; \
@@ -280,8 +280,8 @@
 #define ndb_init(m, n, init_val, ONOFF, sizes) \
 { \
     if (STILES_RANK == 0) { \
-        stile->ss_progress = (volatile int *)stiles_shared_alloc(stile, (m)*(n), sTilesInteger); \
-        sTiles::aux::mem_set_int((int*)stile->ss_progress, (m)*(n), (init_val)); \
+        stile->ss_progress = (volatile int *)stiles_shared_alloc(stile, (size_t)(m)*(size_t)(n), sTilesInteger); \
+        sTiles::aux::mem_set_int((int*)stile->ss_progress, (size_t)(m)*(size_t)(n), (init_val)); \
         for (int j = 0; j < m; j++) { \
             for (int i = 0; i <= j; i++) { \
                 if (j > (sizes[0]-1) && j <= (sizes[0]+sizes[1]-2) && i <= (sizes[0]-1)) { \
@@ -429,13 +429,13 @@
 #define ss_init_customized(m, n, init_val, main_rank_partition1, main_rank_partition2) \
 { \
     if (STILES_RANK == main_rank_partition1) { \
-        stile->ss_progress1 = (volatile int *)stiles_shared_alloc(stile, (m)*(n), sTilesInteger); \
-        sTiles::aux::mem_set_int((int*)stile->ss_progress1, (m)*(n), (init_val)); \
-        stile->ss_progress3 = (volatile int *)stiles_shared_alloc(stile, (m)*(n), sTilesInteger); \
-        sTiles::aux::mem_set_int((int*)stile->ss_progress3, (m)*(n), (init_val)); \
+        stile->ss_progress1 = (volatile int *)stiles_shared_alloc(stile, (size_t)(m)*(size_t)(n), sTilesInteger); \
+        sTiles::aux::mem_set_int((int*)stile->ss_progress1, (size_t)(m)*(size_t)(n), (init_val)); \
+        stile->ss_progress3 = (volatile int *)stiles_shared_alloc(stile, (size_t)(m)*(size_t)(n), sTilesInteger); \
+        sTiles::aux::mem_set_int((int*)stile->ss_progress3, (size_t)(m)*(size_t)(n), (init_val)); \
     } else if (STILES_RANK == main_rank_partition2) { \
-        stile->ss_progress2 = (volatile int *)stiles_shared_alloc(stile, (m)*(n), sTilesInteger); \
-        sTiles::aux::mem_set_int((int*)stile->ss_progress2, (m)*(n), (init_val)); \
+        stile->ss_progress2 = (volatile int *)stiles_shared_alloc(stile, (size_t)(m)*(size_t)(n), sTilesInteger); \
+        sTiles::aux::mem_set_int((int*)stile->ss_progress2, (size_t)(m)*(size_t)(n), (init_val)); \
     } \
     stile->ss_ld1 = (m); \
     stile->ss_abort1 = 0; \
@@ -449,8 +449,8 @@
 #define in_init(m, n, init_val) \
 { \
     if (STILES_RANK == 0) { \
-        stile->ss_progress = (volatile int *)stiles_shared_alloc(stile, (m)*(n), sTilesInteger); \
-        sTiles::aux::mem_set_int((int*)stile->ss_progress, (m)*(n), (init_val)); \
+        stile->ss_progress = (volatile int *)stiles_shared_alloc(stile, (size_t)(m)*(size_t)(n), sTilesInteger); \
+        sTiles::aux::mem_set_int((int*)stile->ss_progress, (size_t)(m)*(size_t)(n), (init_val)); \
     } \
     stile->ss_ld = (m); \
     stile->ss_abort = 0; \

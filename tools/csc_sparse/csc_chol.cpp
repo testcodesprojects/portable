@@ -24,12 +24,12 @@ namespace sTiles { namespace csc_sparse {
 // current head is in row j" makes that lookup O(updates_to_j) without any
 // search. Standard trick from CSparse / Eisenstat-Liu.
 CholStatus chol_numeric(int          n,
-                        const int*   L_colptr,
+                        const int64_t*   L_colptr,
                         const int*   L_rowind,
                         double*      L_values)
 {
     std::vector<double> x(n, 0.0);
-    std::vector<int>    next_idx(n, 0);
+    std::vector<int64_t> next_idx(n, 0);   // holds CSC offsets (can exceed INT_MAX)
     std::vector<int>    col_head(n, -1);
     std::vector<int>    col_next(n, -1);
 
@@ -37,8 +37,8 @@ CholStatus chol_numeric(int          n,
     // If column k has no sub-diagonal entry (e.g. isolated node), it never
     // updates anyone and stays out of the lists.
     for (int k = 0; k < n; ++k) {
-        const int p = L_colptr[k];
-        const int q = L_colptr[k + 1];
+        const int64_t p = L_colptr[k];
+        const int64_t q = L_colptr[k + 1];
         // First entry must be the diagonal (row == k). The first sub-diag,
         // if any, is at p+1.
         if (q - p >= 2) {
@@ -52,8 +52,8 @@ CholStatus chol_numeric(int          n,
     }
 
     for (int j = 0; j < n; ++j) {
-        const int pj  = L_colptr[j];
-        const int pj1 = L_colptr[j + 1];
+        const int64_t pj  = L_colptr[j];
+        const int64_t pj1 = L_colptr[j + 1];
 
         // 1. Gather column j of A (currently sitting in L_values at the
         //    pattern slots) into dense x. Then zero those slots so the
@@ -63,7 +63,7 @@ CholStatus chol_numeric(int          n,
             // Diagonal missing — pattern is broken.
             return CholStatus::BadStructure;
         }
-        for (int p = pj; p < pj1; ++p) {
+        for (int64_t p = pj; p < pj1; ++p) {
             x[L_rowind[p]] = L_values[p];
             L_values[p]    = 0.0;
         }
@@ -74,17 +74,17 @@ CholStatus chol_numeric(int          n,
         col_head[j] = -1;
         while (k != -1) {
             const int kk_next  = col_next[k];
-            const int p_jk     = next_idx[k];        // points at L(j,k)
+            const int64_t p_jk     = next_idx[k];        // points at L(j,k)
             const double L_jk  = L_values[p_jk];
-            const int kend     = L_colptr[k + 1];
+            const int64_t kend     = L_colptr[k + 1];
 
             // x(rows in col k, from j onward) -= L(rows, k) * L(j, k)
-            for (int p = p_jk; p < kend; ++p) {
+            for (int64_t p = p_jk; p < kend; ++p) {
                 x[L_rowind[p]] -= L_values[p] * L_jk;
             }
 
             // Advance column k past row j; re-bucket it under its next row.
-            const int p_next = p_jk + 1;
+            const int64_t p_next = p_jk + 1;
             next_idx[k] = p_next;
             if (p_next < kend) {
                 const int next_row = L_rowind[p_next];
@@ -104,7 +104,7 @@ CholStatus chol_numeric(int          n,
         x[j]            = 0.0;       // clean workspace for next column
 
         const double invLjj = 1.0 / Ljj;
-        for (int p = pj + 1; p < pj1; ++p) {
+        for (int64_t p = pj + 1; p < pj1; ++p) {
             const int    r = L_rowind[p];
             L_values[p]    = x[r] * invLjj;
             x[r]           = 0.0;    // clean workspace

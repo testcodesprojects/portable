@@ -109,8 +109,8 @@ namespace sTiles { namespace preprocess {
     sTiles::StatusCode symbolic_semisparse(int group_index, int call_index, TiledMatrix *scheme) {
 
         int* params = sTiles_get_params();
-        const int tile_type_mode = params[3];
-        const int correction_mode = params[0];
+        const int tile_type_mode = params[sTiles::param::TileTypeMode];
+        const int correction_mode = params[sTiles::param::SemisparsePruningMode];
 
         // Only proceed if:
         // - tile_type_mode == 1 (semisparse tiles only), OR
@@ -170,7 +170,7 @@ namespace sTiles { namespace preprocess {
         const bool*             bmap      = scheme->diagonal_bmapper;
         const int               num_tiles = scheme->numActiveTiles;
         const int               tile_size = scheme->tile_size;
-        const int*              L_colptr  = scheme->L_colptr;
+        const int64_t*              L_colptr  = scheme->L_colptr;
         const int*              L_rowind  = scheme->L_rowind;
 
         if (!semi || !tile_meta || num_tiles <= 0) {
@@ -199,7 +199,7 @@ namespace sTiles { namespace preprocess {
                 int upper_bw = 0;
                 for (int j = 0; j < width; ++j) {
                     const int g = elem_col_start + j;
-                    for (int p = L_colptr[g]; p < L_colptr[g + 1]; ++p) {
+                    for (int64_t p = L_colptr[g]; p < L_colptr[g + 1]; ++p) {
                         const int r = L_rowind[p];
                         if (r < elem_col_start) continue;
                         if (r >= elem_col_start + width) break;  // entries are sorted
@@ -215,9 +215,9 @@ namespace sTiles { namespace preprocess {
                 for (int j = 0; j < width; ++j) {
                     if (c.acol[static_cast<std::size_t>(j)] != -1) continue;  // already marked by phase1
                     const int g   = elem_col_start + j;
-                    const int p_lo = L_colptr[g];
-                    const int p_hi = L_colptr[g + 1];
-                    for (int p = p_lo; p < p_hi; ++p) {
+                    const int64_t p_lo = L_colptr[g];
+                    const int64_t p_hi = L_colptr[g + 1];
+                    for (int64_t p = p_lo; p < p_hi; ++p) {
                         const int r = L_rowind[p];
                         if (r >= row_hi) break;
                         if (r >= elem_row_start) {
@@ -506,7 +506,7 @@ namespace sTiles { namespace preprocess {
         if (!scheme->symbolicTileBitmaskCore) {
             scheme->symbolicTileBitmaskCore = TileMemoryManager::allocate<SymbolicTileBitmaskCore>(num_active, group_index);
             if (!scheme->symbolicTileBitmaskCore) {
-                std::fprintf(stderr, "ERROR: Memory allocation failed for symbolicTileBitmaskCore.\n");
+                sTiles::Logger::errorf("Memory allocation failed for symbolicTileBitmaskCore.");
                 return StatusCode::OutOfResources;
             }
         }
@@ -520,20 +520,20 @@ namespace sTiles { namespace preprocess {
         //     for (int t = 0; t < num_active; ++t) {
         //         SemisparseTileMetaCore &c = core[t];
 
-        //         std::fprintf(stderr, "Tile %d:\n", t);
-        //         std::fprintf(stderr, "  sa = %d\n", c.sa);
+        //         sTiles::Logger::errorf("Tile %d:", t);
+        //         sTiles::Logger::errorf("  sa = %d", c.sa);
 
-        //         std::fprintf(stderr, "  acol (size = %zu): ", c.acol.size());
+        //         sTiles::Logger::errorf("  acol (size = %zu): ", c.acol.size());
         //         for (std::size_t j = 0; j < c.acol.size(); ++j) {
-        //             std::fprintf(stderr, "%d ", c.acol[j]);
+        //             sTiles::Logger::errorf("%d ", c.acol[j]);
         //         }
-        //         std::fprintf(stderr, "\n");
+        //         sTiles::Logger::errorf("");
 
-        //         std::fprintf(stderr, "  aind (size = %zu): ", c.aind.size());
+        //         sTiles::Logger::errorf("  aind (size = %zu): ", c.aind.size());
         //         for (std::size_t k = 0; k < c.aind.size(); ++k) {
-        //             std::fprintf(stderr, "%d ", c.aind[k]);
+        //             sTiles::Logger::errorf("%d ", c.aind[k]);
         //         }
-        //         std::fprintf(stderr, "\n");
+        //         sTiles::Logger::errorf("");
         //     }
         // }
         // exit(0);

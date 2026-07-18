@@ -57,10 +57,12 @@
 #define STILES_USE_PARTITIONS 0
 #endif
 
-// Size of the global control-parameter array. Slots 0..24 are defined and
-// documented below; 25..49 are reserved for future params. Bump if appending
-// new slots — all iteration/bounds-check sites use this constant.
-#define STILES_NUM_PARAMS 50
+// The control-parameter array size (STILES_NUM_PARAMS), the per-slot
+// documentation, and the default table all live in
+// tools/common/stiles_params.hpp — the single source of truth. Included
+// here (before the project headers) because the array must be defined
+// before tools/ordering/stiles_ordering.hpp, which reads it inline.
+#include "../common/stiles_params.hpp"
 
 // =============================================================================
 // Standard-library headers
@@ -71,6 +73,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>   // std::getenv / std::atoi (adaptive_snode_cap)
+#include <cstring>   // std::strcmp (sTiles_get_version git fallback)
 #include <exception>
 #include <iomanip>
 #include <iostream>
@@ -87,93 +90,38 @@
 #endif
 
 // =============================================================================
-// Control-parameter array
+// Control-parameter arrays
 // =============================================================================
 //
 // Defined here (before the project headers) because tools/ordering/stiles_ordering.hpp
 // inlines code that reads stiles_control_params[] and is included below.
 //
-// Documented per-slot semantics. Setters/getters live in
-// tools/common/stiles_params.cpp; named indices and defaults live in
-// tools/common/stiles_params.hpp.
+// Per-slot semantics, named indices (sTiles::param::*) and the default table
+// are documented ONCE in tools/common/stiles_params.hpp. Setters/getters live
+// in tools/common/stiles_params.cpp.
 //
-// param[0]:  semisparse pruning mode (sTiles_set_semisparse_param)
-//   0 = no pruning (skip semisparse checks)
-//   1 = prune_single_zero_active_column_range
-//   2 = prune_zero_semisparse_tiles_range
-//   3 = prune_zero_semisparse_columns_range (default)
-// param[1]:  user tile size (-1 = auto-detect)
-// param[2]:  ordering strategy mode (sTiles_set_ordering_mode)
-//   0 = use single ordering from call.ordering_strategy (default)
-//   1 = parallel evaluation of RCM + ND, pick best
-//   2 = parallel evaluation of RCM + ND + SCOTCH, pick best
-// param[3]:  tile type mode (sTiles_set_tile_type_mode)
-//   0 = dense only (macOS default), 1 = semisparse only (Linux default),
-//   2 = non-uniform tiles (sTiles::sparse via tools/sparse/)
-// param[4]:  tile ordering strategy mode
-// param[5]:  tile ordering size threshold (default 20)
-// param[6]:  force ND ordering flag (0 = auto, 1 = force ND)
-// param[7]:  inverse storage mode (sTiles_set_inverse_storage_mode)
-//   0 = dense: all inverse tiles full h×w; 1 = diag h×w, off-diag h×sa
-// param[8]:  parallelization mode (sTiles_set_use_omp)
-//   0 = pthreads (Linux default), 1 = OpenMP (macOS default)
-// param[9]:  semisparse implementation (sTiles_set_semisparse_impl)
-//   0 = original; 1 = imp1; 2 = imp3 / imp3_serial (default);
-//   3 = imp3_serial_and_sparse (1-core sparse-aware fast path)
-// param[10]: GPU compare mode (0 = GPU only, 1 = GPU + CPU compare)
-// param[11]: GPU enable/disable (1 = enabled, 0 = disabled)
-// param[12]: memory estimate mode (sTiles_set_memory_estimate)
-//   0 = skip (default), 1 = compute & print during preprocessing
-// param[13]: tile ordering min tiles_dim threshold (default 100;
-//             0 = always run tile-level ordering)
-// param[14]: serial mode (sTiles_set_serial_mode)
-//   0 = auto serial when num_cores == 1, 1 = always parallel
-// param[15]: bandwidth mode for semisparse symbolic factorisation
-//   (sTiles_set_bw_mode; 0 = conservative tile-width-1, 1 = tight la-fa)
-// param[16]: tile-first ordering strategies (sTiles_set_tile_first_ordering_mode)
-// param[17]: reserved (formerly blocksparse factorization mode)
-// param[18]: reserved (formerly blocksparse auto threshold)
-// param[19]: reserved (formerly selected-inverse backend)
-// param[20]: force SCOTCH ordering (sTiles_set_force_scotch_ordering)
-//   0 = adaptive selection (default), 1 = force SCOTCH id=4
-// param[21]: enable top-level SCOTCH padding (sTiles_set_scotch_padding)
-//   0 = off (default; Path 2 never fires), 1 = on (pads P1|P2|Sep)
-// param[22]: Path 2 ND scheduling depth (sTiles_set_path2_depth)
-//   0/1 = legacy 3-way (default), 2 = 7 regions, 3 = 15 regions, ...
-// param[23]: reserved (formerly iterative refinement; removed)
-// param[24]: reserved (formerly INLA auto-picker; removed)
-//
-// Live storage. Platform-default snapshot used by the reset_* APIs lives in
-// tools/common/stiles_params.cpp.
-int stiles_control_params[STILES_NUM_PARAMS] = {
-    0, -1, 14569,
-#ifdef __APPLE__
-    0,           // [3] TileTypeMode: macOS = dense
-#else
-    1,           // [3] TileTypeMode: Linux = semisparse
-#endif
-    14569, -1, 0, 1,
-#ifdef __APPLE__
-    1,           // [8] UseOMP: macOS defaults to the OMP backend (no
-                 //     sched-affinity for the pthreads backend on macOS)
-#else
-    0,           // [8] UseOMP: Linux defaults to the pthreads backend
-#endif
-    2,
-    0,  1, 0, 100, 0, 0, 0, 0, 0, 0,
-    0,  0, 0, 0, 0,
-    // 25..49: reserved for future params
-    // [25] TREE_PATH_ENABLE default ON (was 0) for tree-reduction experiments;
-    //      corner_probe's 6-gate predicate still decides per-matrix. [26]=FORCE stays 0.
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0
-};
+// Live storage. Initialized from the same STILES_DEFAULT_PARAMS_INIT macro as
+// sTiles::kDefaultParams, so the reset_* APIs and the load-time state can
+// never diverge.
+int stiles_control_params[STILES_NUM_PARAMS] = STILES_DEFAULT_PARAMS_INIT;
+
+// User-configuration shadow of the live array. Holds what the USER asked for
+// (defaults + explicit setter calls) and is never touched by preprocessing.
+// The auto-resolvable slots ([1] tile size, [3] tile type, [4] tile ordering,
+// [5] tile-ordering block size) get RESOLVED values written into the live
+// array during preprocessing; sTiles_preprocess_group restores those slots
+// from this shadow before each group so every group re-resolves from the
+// user's configuration instead of inheriting the previous group's resolution.
+// Maintained by the setters in tools/common/stiles_params.cpp.
+int stiles_user_params[STILES_NUM_PARAMS] = STILES_DEFAULT_PARAMS_INIT;
 
 // Expert-mode flag. Must call sTiles_expert_user() before any configuration
 // setter takes effect. Non-static because tools/ordering/ordering_overrides.cpp
 // and tools/common/stiles_params.cpp both read it via `extern`.
 bool expert_mode_enabled = false;
+
+// Typo scan for STILES_* environment variables (tools/common/stiles_params.cpp).
+extern "C" void stiles_env_validate(void);
 
 // =============================================================================
 // Project headers
@@ -236,7 +184,7 @@ inline int adaptive_snode_cap(int tile_size, int num_cores, int n) {
 // High (clustered, e.g. sem_n*) -> semisparse; low (scattered, irregular) -> sparse.
 // One O(nnz(L)) pass, O(ntr) scratch. Assumes L_rowind sorted ascending within columns.
 inline double mean_occupancy_from_L(const TiledMatrix* scheme, int tile_size) {
-    const int* colptr = scheme->L_colptr;
+    const int64_t* colptr = scheme->L_colptr;
     const int* rowind = scheme->L_rowind;
     const int n  = scheme->dim;
     const int ts = tile_size;
@@ -282,7 +230,7 @@ inline double mean_occupancy_from_L(const TiledMatrix* scheme, int tile_size) {
 // sem_n* ~556x vs thermal1/thermomech/net* ~1.4--1.5x, so a >=50 cutoff has a wide
 // margin on both sides.
 inline double degree_skew_from_L(const TiledMatrix* scheme) {
-    const int* colptr = scheme->L_colptr;
+    const int64_t* colptr = scheme->L_colptr;
     const int n = scheme->dim;
     if (!colptr || n <= 0) return 1.0;
     long long total = 0, mx = 0;
@@ -300,7 +248,7 @@ inline double degree_skew_from_L(const TiledMatrix* scheme) {
 // ~(neighbors of k)^2 independent GEMM updates). Used to diagnose/decide the
 // work-aware core cap (a column with few neighbors can't fill many cores).
 inline int max_neighbor_tiles_from_L(const TiledMatrix* scheme, int tile_size) {
-    const int* colptr = scheme->L_colptr;
+    const int64_t* colptr = scheme->L_colptr;
     const int* rowind = scheme->L_rowind;
     const int n  = scheme->dim;
     const int ts = tile_size;
@@ -671,23 +619,39 @@ void sTiles_quit() {
  *         Example: "2.0.0 (built 2026-01-21)"
  */
 const char* sTiles_get_version() {
-    // Build the full version string with build date and git hash at first call
-    static char full_version[128] = {0};
+    // Build the full version string with build date and build identity at
+    // first call.
+    static char full_version[160] = {0};
     if (full_version[0] == '\0') {
+        // STILES_GIT_VERSION is the build identity baked in by make.inc, in
+        // order of preference: an explicit BUILD_VERSION=<...> make argument,
+        // "git <date> [<hash>]" from a git checkout, "ci <ref> [<sha>]" from
+        // the GitHub Actions environment (tarball checkouts), or
+        // "src [<hash>]" — a content hash of the sTiles sources — for any
+        // other tree. Spaces arrive as underscores (make -D quoting); undo
+        // that for display. "unknown" (no identity at all) is omitted.
+        const char* id_raw = "";
 #ifdef STILES_GIT_VERSION
-        snprintf(full_version, sizeof(full_version), "%s (built %04d-%02d-%02d, git %s)",
-                 sTiles::config::versionString,
-                 sTiles::internal::BUILD_Y,
-                 sTiles::internal::BUILD_M,
-                 sTiles::internal::BUILD_D,
-                 STILES_GIT_VERSION);
-#else
-        snprintf(full_version, sizeof(full_version), "%s (built %04d-%02d-%02d)",
-                 sTiles::config::versionString,
-                 sTiles::internal::BUILD_Y,
-                 sTiles::internal::BUILD_M,
-                 sTiles::internal::BUILD_D);
+        id_raw = STILES_GIT_VERSION;
 #endif
+        if (id_raw[0] != '\0' && std::strcmp(id_raw, "unknown") != 0) {
+            char id_pretty[96] = {0};
+            snprintf(id_pretty, sizeof(id_pretty), "%s", id_raw);
+            for (char* p = id_pretty; *p; ++p)
+                if (*p == '_') *p = ' ';
+            snprintf(full_version, sizeof(full_version), "%s (built %04d-%02d-%02d, %s)",
+                     sTiles::config::versionString,
+                     sTiles::internal::BUILD_Y,
+                     sTiles::internal::BUILD_M,
+                     sTiles::internal::BUILD_D,
+                     id_pretty);
+        } else {
+            snprintf(full_version, sizeof(full_version), "%s (built %04d-%02d-%02d)",
+                     sTiles::config::versionString,
+                     sTiles::internal::BUILD_Y,
+                     sTiles::internal::BUILD_M,
+                     sTiles::internal::BUILD_D);
+        }
     }
     return full_version;
 }
@@ -1095,7 +1059,7 @@ int Setup_all_teams(void** obj)
 
             int status = Setup_teams_for_call(s, call);
             if (status != 0) {
-                std::cerr << "Error: Failed to create teams for global index " << call->global_index << std::endl;
+                sTiles::Logger::error("Failed to create teams for global index ", call->global_index);
                 return status;
             }
         }
@@ -1124,7 +1088,7 @@ int Setup_all_teams(void** obj)
 
         int status = sTiles::Control::CreatePersistentTeam((int)group_cores.size(), group_cores.data(), group_global_index);
         if (status != 0) {
-            std::cerr << "Error: Failed to create group team for group " << group_index << std::endl;
+            sTiles::Logger::error("Failed to create group team for group ", group_index);
             return status;
         }
     }
@@ -1169,18 +1133,33 @@ int sTiles_preprocess_initialization(sTiles_call **call_info, TiledMatrix **sche
         sTiles::Logger::error("Memory allocation failed for TiledMatrix.");
         return -1;
     }
+    // TiledMatrix has non-trivial C++ members (std::string selected_ordering,
+    // std::vector partitions, shared_ptr task lists); calloc'd memory is NOT a
+    // constructed object. A zeroed std::string has _M_p == NULL, and assigning
+    // an EMPTY string to it writes the '\0' terminator through that null
+    // pointer (SEGV) — hit by every single-tile model (order <= tile_size,
+    // variant 1), whose primary skips the ordering tournament and leaves
+    // selected_ordering empty for the secondary-call copy. Placement
+    // value-init keeps all POD fields zero (same as calloc) but constructs
+    // the C++ members validly. Must run BEFORE any field writes below.
+    new (*scheme) TiledMatrix();
+    // Raw zeroed allocation: mark the per-scheme tile mode as unresolved.
+    // sTiles_preprocess_group snapshots the resolved mode at the end of
+    // preprocessing; compute-phase code reads it via stiles_scheme_tile_mode.
+    (*scheme)->tile_type_mode = -1;
 
     // Check if preprocessing is required
     if ((*call_info)->sequence_id < 1) {
 
         // Initialize basic parameters
-        (*call_info)->tile_size = stiles_control_params[1]; //DEFAULT_TILE_SIZE;
-        (*call_info)->ordering_strategy = stiles_control_params[2]; //STILES_DEFAULT_ORDERING;
+        (*call_info)->tile_size = stiles_control_params[sTiles::param::UserTileSize]; //DEFAULT_TILE_SIZE;
+        // Slot 2 (ordering mode) is deprecated: the ordering bake-off selects
+        // its candidates adaptively. ordering_strategy is kept only for
+        // logging in the variant-2 path.
+        (*call_info)->ordering_strategy = 0;
         if((*call_info)->order < 1000){
-            (*call_info)->ordering_strategy = 0;
-            stiles_control_params[2] = 0;
-            stiles_control_params[4] = 0;
-            sTiles::Logger::debug("│   ↪ Matrix size < 1000 → Defaulting to ordering = 0        ");
+            stiles_control_params[sTiles::param::TileOrderingStrategy] = 0;
+            sTiles::Logger::debug("│   ↪ Matrix size < 1000 → Disabling tile-level ordering     ");
         }
 
         sTiles::Logger::debug("│     • Initial tile size = " + std::to_string((*call_info)->tile_size));
@@ -1201,15 +1180,13 @@ int sTiles_preprocess_initialization(sTiles_call **call_info, TiledMatrix **sche
         if ((*call_info)->factorization_variant == 1) {
             (*call_info)->tile_size = (*call_info)->order;
             (*call_info)->ordering_strategy = 0;
-            stiles_control_params[2] = 0;
-            stiles_control_params[4] = 0;
+            stiles_control_params[sTiles::param::TileOrderingStrategy] = 0;
             sTiles::Logger::debug("│   ↪ Factorization Type = 1 → tile size set to N = " + std::to_string((*call_info)->tile_size));
         }
 
         if((*call_info)->factorization_variant==2){
             (*call_info)->ordering_strategy = 0;
-            stiles_control_params[2] = 0;
-            stiles_control_params[4] = 0;
+            stiles_control_params[sTiles::param::TileOrderingStrategy] = 0;
             sTiles::Logger::debug("│   ↪ Factorization Type = 2 → ordering forced to 0          ");
         }
         
@@ -1221,8 +1198,7 @@ int sTiles_preprocess_initialization(sTiles_call **call_info, TiledMatrix **sche
             // Dense matrix configuration
             (*call_info)->factorization_variant = 1;
             (*call_info)->ordering_strategy = 0;
-            stiles_control_params[2] = 0;
-            stiles_control_params[4] = 0;
+            stiles_control_params[sTiles::param::TileOrderingStrategy] = 0;
             (*call_info)->use_nested_dissection = false;
             (*call_info)->tile_size = (*call_info)->order;
 
@@ -1343,6 +1319,20 @@ int sTiles_preprocess_initialization(sTiles_call **call_info, TiledMatrix **sche
 
 return 0;
 }
+
+
+// Symbolic-only preprocessing: when set, sTiles_init / sTiles_init_group run the
+// ordering + symbolic phase (populating scheme->element_perm) but STOP before
+// committing the big numeric factor arena. Lets a caller (e.g. an MPI rank) get
+// the permutation cheaply and ship it, deferring the numeric allocation. Gated
+// at the two arena entry points so it covers every numeric mode.
+static int g_symbolic_only = 0;
+
+// Symbolic-ready callback: if set, fired from sTiles_preprocess_group the instant
+// group 0's ordering+symbolic is done (element_perm ready) -- BEFORE the numeric
+// arena. Lets an MPI rank ship the perm mid-init and overlap the rest. NULL =
+// no-op (default), so this is inert unless a caller registers it.
+static void (*g_symbolic_done_cb)(int group, int call, const int *perm, int n) = NULL;
 
 // =============================================================================
 // Primary-call helpers split out of sTiles_preprocess_group by factorization
@@ -1500,7 +1490,7 @@ static int preprocess_primary_sparse(sTiles_call*& call_info,
     // nnz(L), then rewrite stiles_control_params[3] to either 1 (semisparse)
     // for low fill or 2 (non-uniform) for high fill. Slaves and downstream
     // dispatch read param[3] and follow the resolved mode.
-    int tile_type_mode = stiles_control_params[3];
+    int tile_type_mode = stiles_control_params[sTiles::param::TileTypeMode];
     bool symbolic_already_run = false;
     if (tile_type_mode == 3) {
         const double t0 = omp_get_wtime();
@@ -1575,7 +1565,7 @@ static int preprocess_primary_sparse(sTiles_call*& call_info,
             sTiles::Logger::timing_always("│   ↪ Mode auto-select: ", sig, " -> ",
                 mode_name, " (mode ", resolved, ")");
         }
-        stiles_control_params[3] = resolved;
+        stiles_control_params[sTiles::param::TileTypeMode] = resolved;
         tile_type_mode = resolved;
 
         // ── Diagnostic: dump the work/parallelism signals and EXIT (env-gated).
@@ -1680,6 +1670,12 @@ static int preprocess_primary_sparse(sTiles_call*& call_info,
                 }
             }
             sTiles::Logger::timing("│   ↪ Symbolic phase (for sparse module): ", (omp_get_wtime() - t0), " s");
+        }
+
+        if (g_symbolic_only) {
+            // symbolic-only: scheme->element_perm is ready; defer the numeric
+            // arena (api::create/assign_graph -> CellStore::allocate).
+            return EXIT_SUCCESS;
         }
 
         void* h = nullptr;
@@ -1837,12 +1833,12 @@ static int preprocess_primary_sparse(sTiles_call*& call_info,
     {
         const double t_pre = omp_get_wtime();
         bool built = false;
-        if (stiles_control_params[7] == 1 && stiles_schemes[global_index]->compute_inverse) {
+        if (stiles_control_params[sTiles::param::InverseStorageMode] == 1 && stiles_schemes[global_index]->compute_inverse) {
             sTiles::preprocess::build_inv_gather_info(stiles_schemes[global_index]);
             built = true;
         }
-        if (stiles_control_params[7] == 1 ||
-            stiles_control_params[3] == 1 || stiles_control_params[3] == 2) {
+        if (stiles_control_params[sTiles::param::InverseStorageMode] == 1 ||
+            stiles_control_params[sTiles::param::TileTypeMode] == 1 || stiles_control_params[sTiles::param::TileTypeMode] == 2) {
             sTiles::preprocess::build_chol_scatter_info(stiles_schemes[global_index]);
             built = true;
         }
@@ -2030,10 +2026,10 @@ static int preprocess_secondary_call(int call_index,
         // per-task scatter info must be rebuilt too. Same decoupling as the
         // primary build: inverse gather follows params[7]; chol scatter is
         // required for any semisparse mode.
-        if (stiles_control_params[7] == 1 && current_scheme->compute_inverse)
+        if (stiles_control_params[sTiles::param::InverseStorageMode] == 1 && current_scheme->compute_inverse)
             sTiles::preprocess::build_inv_gather_info(current_scheme);
-        if (stiles_control_params[7] == 1 ||
-            stiles_control_params[3] == 1 || stiles_control_params[3] == 2) {
+        if (stiles_control_params[sTiles::param::InverseStorageMode] == 1 ||
+            stiles_control_params[sTiles::param::TileTypeMode] == 1 || stiles_control_params[sTiles::param::TileTypeMode] == 2) {
             sTiles::preprocess::build_chol_scatter_info(current_scheme);
         }
     }
@@ -2079,7 +2075,7 @@ static int preprocess_secondary_call(int call_index,
 
     // Per-call tile buffer allocation, dispatched by variant + tile_type_mode.
     int* params = sTiles_get_params();
-    const int tile_type_mode = params[3];
+    const int tile_type_mode = params[sTiles::param::TileTypeMode];
 
     if (call_info->factorization_variant == 0 || call_info->factorization_variant == 3) {
         // Sparse variants: allocate based on tile_type_mode
@@ -2157,11 +2153,30 @@ static int preprocess_primary_alloc_tiles(sTiles_call* call_info,
 
 //groups
 int sTiles_preprocess_group(int group_index, sTiles_object **obj, TiledMatrix **stiles_schemes) {
-    
+
     //section A
     if (obj == NULL || *obj == NULL) {
-        fprintf(stderr, "Error: obj is not properly initialized.\n");
+        sTiles::Logger::errorf("obj is not properly initialized.");
         return EXIT_FAILURE;
+    }
+
+    // Re-resolution: preprocessing writes RESOLVED values (auto tile size,
+    // auto tile-type routing, small-matrix tile-ordering disable) into the
+    // live control-parameter slots below. Restore those slots from the
+    // user-config shadow first so THIS group resolves from what the user
+    // configured, not from whatever the previous group resolved to.
+    {
+        const int kResolvableSlots[] = { 1 /*tile size*/, 3 /*tile type*/,
+                                         4 /*tile ordering*/, 5 /*tile-ordering size*/ };
+        for (int slot : kResolvableSlots)
+            stiles_control_params[slot] = stiles_user_params[slot];
+        if (stiles_control_params[sTiles::param::UserTileSize] < 0) {
+            // Hardware-derived, stable within a process: detect (and log) once.
+            static const int auto_ts = sTiles::get::auto_tile_size();
+            stiles_control_params[sTiles::param::UserTileSize] = auto_ts;
+        }
+        if (stiles_control_params[sTiles::param::TileOrderingThreshold] < 0)
+            stiles_control_params[sTiles::param::TileOrderingThreshold] = stiles_control_params[sTiles::param::UserTileSize] / 2;
     }
 
     sTiles_object *s = *obj;
@@ -2187,7 +2202,7 @@ int sTiles_preprocess_group(int group_index, sTiles_object **obj, TiledMatrix **
     int eff_cores = 1;
 
     if (num_calls <= 0) {
-        fprintf(stderr, "Error: No calls to preprocess in the group.\n");
+        sTiles::Logger::errorf("No calls to preprocess in the group.");
         return EXIT_FAILURE;
     }
 
@@ -2201,7 +2216,7 @@ int sTiles_preprocess_group(int group_index, sTiles_object **obj, TiledMatrix **
 
         TiledMatrix *scheme = NULL;
         if (sTiles_preprocess_initialization(&call_info, &scheme, 0, group_index) != 0) {
-            fprintf(stderr, "Error: Failed to preprocess parameters for call %d.\n", 0);
+            sTiles::Logger::errorf("Failed to preprocess parameters for call %d.", 0);
             return EXIT_FAILURE;
         }
 
@@ -2216,15 +2231,33 @@ int sTiles_preprocess_group(int group_index, sTiles_object **obj, TiledMatrix **
         // Variant-specific symbolic + lookup work (pre-GPU dispatch)
         if (dense_variant) {
             if (preprocess_primary_dense(scheme, call_info, group_index, rescale_total_cores) != EXIT_SUCCESS) {
+                scheme->preprocess_failed = true;
                 return EXIT_FAILURE;
             }
         } else {
-            const bool force_nd = (stiles_control_params[6] == 1);
+            const bool force_nd = (stiles_control_params[sTiles::param::ForceNDOrdering] == 1);
             if (preprocess_primary_sparse(call_info, scheme, stiles_schemes, global_index,
                                          group_index, eff_cores, num_threads_level1,
                                          rescale_cores, rescale_total_cores, force_nd) != EXIT_SUCCESS) {
+                scheme->preprocess_failed = true;
                 return EXIT_FAILURE;
             }
+        }
+
+        // Perm is ready (element_perm) but the numeric arena is not yet committed:
+        // fire the symbolic-ready callback for group 0 so a caller can ship the
+        // ordering now and overlap the remaining allocation.
+        if (g_symbolic_done_cb && group_index == 0 && scheme->element_perm) {
+            g_symbolic_done_cb(group_index, 0, scheme->element_perm, scheme->dim);
+        }
+
+        if (g_symbolic_only) {
+            // symbolic-only: the primary call's element_perm is populated; skip
+            // the memory estimate, GPU dispatch, tile allocation, and ALL
+            // secondary calls -- everything that commits numeric storage. This
+            // covers dense/semisparse (arena in preprocess_primary_alloc_tiles)
+            // as well as sparse (which already returned early above).
+            return EXIT_SUCCESS;
         }
 
         //section C
@@ -2232,13 +2265,25 @@ int sTiles_preprocess_group(int group_index, sTiles_object **obj, TiledMatrix **
         {
             // Get tile_type_mode for accurate GPU memory calculation
             int* params = sTiles_get_params();
-            const int tile_type_mode = params[3];
+            const int tile_type_mode = params[sTiles::param::TileTypeMode];
 
-            const sTiles::MemoryEstimate mem_est = sTiles::memory::calculate_memory_exact(
-                stiles_schemes[global_index], call_info, tile_type_mode);
+            // Param 12 (MemoryEstimateMode) gates BOTH the computation and the
+            // printing. Exception: when the GPU path is enabled (param 11 != 0),
+            // the estimate is FORCED on — the per-device planner below sizes GPU
+            // memory from mem_est.gpu_total_gb, so it cannot be skipped there.
+            bool want_mem_est = (stiles_control_params[sTiles::param::MemoryEstimateMode] != 0);
+            #ifdef STILES_GPU
+            if (stiles_control_params[sTiles::param::GpuEnable] != 0) want_mem_est = true;
+            #endif
+
+            sTiles::MemoryEstimate mem_est{};
+            if (want_mem_est) {
+                mem_est = sTiles::memory::calculate_memory_exact(
+                    stiles_schemes[global_index], call_info, tile_type_mode);
+            }
 
             // Only print memory breakdown if explicitly requested
-            if (stiles_control_params[12]) {
+            if (stiles_control_params[sTiles::param::MemoryEstimateMode]) {
                 sTiles::memory::print_memory_estimate(mem_est);
 
                 // Warn if memory seems high (> 32 GB)
@@ -2251,7 +2296,7 @@ int sTiles_preprocess_group(int group_index, sTiles_object **obj, TiledMatrix **
             // GPU availability and memory check (variant 0, tile_type 0 or 1)
             #ifdef STILES_GPU
             // Check if GPU is globally enabled via sTiles_use_gpu()
-            if (stiles_control_params[11] == 0) {
+            if (stiles_control_params[sTiles::param::GpuEnable] == 0) {
                 // GPU disabled by user
                 stiles_schemes[global_index]->use_gpu = false;
                 stiles_schemes[global_index]->GPU_ID = -1;
@@ -2259,7 +2304,7 @@ int sTiles_preprocess_group(int group_index, sTiles_object **obj, TiledMatrix **
                 sTiles::Logger::info("│   ✗ CPU MODE: GPU disabled by user (sTiles_use_gpu(0))");
             } else {
             int* gpu_params = sTiles_get_params();
-            const int gpu_tile_type_mode = gpu_params[3];  // 0=dense, 1=semisparse
+            const int gpu_tile_type_mode = gpu_params[sTiles::param::TileTypeMode];  // 0=dense, 1=semisparse
             sTiles::Logger::info("│   GPU Early Check: variant=", call_info->factorization_variant,
                                  ", tile_type_mode=", gpu_tile_type_mode);
 
@@ -2367,7 +2412,7 @@ int sTiles_preprocess_group(int group_index, sTiles_object **obj, TiledMatrix **
     {
         TiledMatrix* primary_scheme = stiles_schemes[(*obj)->call_matrix[group_index][0]];
         int* params = sTiles_get_params();
-        const int tile_type_mode = params[3];
+        const int tile_type_mode = params[sTiles::param::TileTypeMode];
 
         // Allocate GPU tiles if: use_gpu=true, variant 0, tile_type 0 (dense)
         if (primary_scheme->use_gpu &&
@@ -2466,6 +2511,17 @@ int sTiles_preprocess_group(int group_index, sTiles_object **obj, TiledMatrix **
     }
     #endif
 
+    // Snapshot the RESOLVED tile mode onto every scheme in this group.
+    // Auto mode (3) was resolved to 0/1/2 during symbolic preprocessing (the
+    // resolution is written into the live slot [3] for the preprocess-time
+    // readers); compute-phase code must use the per-scheme copy so groups
+    // with different resolutions can coexist and run concurrently.
+    for (int c = 0; c < num_calls; ++c) {
+        const int gi = s->call_matrix[group_index][c];
+        if (gi >= 0 && stiles_schemes[gi])
+            stiles_schemes[gi]->tile_type_mode = stiles_control_params[sTiles::param::TileTypeMode];
+    }
+
     return EXIT_SUCCESS;
 }
 
@@ -2512,7 +2568,7 @@ int sTiles_assign_values(int group_index, int call_index, void **obj, double *x,
         int NNZ = call->nnz - pad;
 
         // Create folder name with matrix size and tile mode (only overwrites same size+mode)
-        const int tile_mode = stiles_control_params[3];
+        const int tile_mode = stiles_control_params[sTiles::param::TileTypeMode];
         char export_dir[256];
         snprintf(export_dir, sizeof(export_dir), "stiles_exported_N%d_mode%d", N, tile_mode);
         #ifdef _WIN32
@@ -2604,17 +2660,17 @@ int sTiles_assign_values(int group_index, int call_index, void **obj, double *x,
         // Sparse variants
         // Populate semisparse/chunked tiles and mirror the values into dense tiles so the
         // MKL kernels never see an all-zero block from an otherwise SPD matrix.
-        if (stiles_control_params[3] == 0) {
+        if (stiles_control_params[sTiles::param::TileTypeMode] == 0) {
             sTiles::preprocess::update_x_dense_tiles(global_index, s->schemes, x, nested);
-        } else if (stiles_control_params[3] == 1) {
+        } else if (stiles_control_params[sTiles::param::TileTypeMode] == 1) {
             sTiles::preprocess::update_x_semisparse_tiles(global_index, s->schemes, x, nested);
-        } else if (stiles_control_params[3] == 2) {
+        } else if (stiles_control_params[sTiles::param::TileTypeMode] == 2) {
             sTiles::preprocess::update_x_semisparse_tiles(global_index, s->schemes, x, nested);
             sTiles::preprocess::update_x_dense_tiles(global_index, s->schemes, x, nested);
         }
 
     } else {
-        std::fprintf(stderr, "Error: Unsupported factorization variant %d in group %d\n", variant, group_index);
+        sTiles::Logger::errorf("Unsupported factorization variant %d in group %d", variant, group_index);
         std::abort();
     }
 
@@ -2661,17 +2717,17 @@ int sTiles_assign_values_ones(int group_index, int call_index, void **obj, bool 
 
     if (variant == 0 || variant == 3) {
 
-        if (stiles_control_params[3] == 0) {
+        if (stiles_control_params[sTiles::param::TileTypeMode] == 0) {
             sTiles::preprocess::update_x_dense_tiles_ones(global_index, s->schemes, nested);
-        } else if (stiles_control_params[3] == 1) {
+        } else if (stiles_control_params[sTiles::param::TileTypeMode] == 1) {
             sTiles::preprocess::update_x_semisparse_tiles_ones(global_index, s->schemes, nested);
-        } else if (stiles_control_params[3] == 2) {
+        } else if (stiles_control_params[sTiles::param::TileTypeMode] == 2) {
             sTiles::preprocess::update_x_semisparse_tiles_ones(global_index, s->schemes, nested);
             sTiles::preprocess::update_x_dense_tiles_ones(global_index, s->schemes, nested);
         }
 
     } else {
-        std::fprintf(stderr, "Error: Unsupported factorization variant %d in group %d\n", variant, group_index);
+        sTiles::Logger::errorf("Unsupported factorization variant %d in group %d", variant, group_index);
         std::abort();
     }
 
@@ -2724,7 +2780,7 @@ double sTiles_get_selinv_elm(int group_index, int call_index, int irow, int icol
     }
 
     // Check tile type mode for semisparse
-    const int tile_type_mode = stiles_control_params[3];
+    const int tile_type_mode = stiles_control_params[sTiles::param::TileTypeMode];
     const bool use_semisparse = (tile_type_mode == 1 || tile_type_mode == 2);
     // For selinv, check chunkedInverseTiles which stores the inverse (not chunkedDenseTiles which stores L)
     const bool has_semisparse_inv = (S->chunkedInverseTiles != nullptr && S->semisparseTileMetaCore != nullptr && S->tileMetaCore != nullptr);
@@ -2820,7 +2876,7 @@ double sTiles_get_selinv_elm(int group_index, int call_index, int irow, int icol
         // Check inverse storage mode: params[7]
         //   0 = dense: inverse tiles are full h×w (default)
         //   1 = semisparse: diagonal dense, off-diagonal active-columns
-        const int inverse_storage_mode = stiles_control_params[7];
+        const int inverse_storage_mode = stiles_control_params[sTiles::param::InverseStorageMode];
 
         if (inverse_storage_mode == 1 && S->semisparseTileMetaCore) {
             // Semisparse inverse storage mode:
@@ -2974,7 +3030,7 @@ double sTiles_get_chol_elm(int group_index, int call_index, int irow, int icol, 
     }
 
     // Check tile type mode
-    const int tile_type_mode = stiles_control_params[3];
+    const int tile_type_mode = stiles_control_params[sTiles::param::TileTypeMode];
     const bool use_semisparse = (tile_type_mode == 1 || tile_type_mode == 2);
 
     // Determine which tile storage to use
@@ -3332,8 +3388,8 @@ int sTiles_clear_selinv(int group_index, int call_index, void **obj) {
     // Variant 0: tile path (mode 0 = dense tiles, mode 1 = semisparse).
     // Mode 2 (supernodal sparse module) is handled above via sparse_handle.
     int* params = sTiles_get_params();
-    const int tile_type_mode = params[3];
-    const int inverse_storage_mode = params[7];
+    const int tile_type_mode = params[sTiles::param::TileTypeMode];
+    const int inverse_storage_mode = params[sTiles::param::InverseStorageMode];
 
     // Clear dense inverseTiles (mode 0)
     if (tile_type_mode == 0 && scheme->inverseTiles && scheme->tileMetaCore) {
@@ -3525,6 +3581,24 @@ int sTiles_init(void **obj) {
     return 0;
 }
 
+// Toggle symbolic-only preprocessing (see g_symbolic_only). Persistent until
+// cleared; sTiles_init_symbolic wraps it for a single call.
+void sTiles_set_symbolic_only(int on) { g_symbolic_only = (on ? 1 : 0); }
+int  sTiles_get_symbolic_only(void)   { return g_symbolic_only; }
+
+// Register (or clear with NULL) the symbolic-ready callback (see g_symbolic_done_cb).
+void sTiles_set_symbolic_done_callback(void (*cb)(int, int, const int *, int)) { g_symbolic_done_cb = cb; }
+
+// Ordering + symbolic only: populates scheme->element_perm for every group but
+// commits NO numeric factor arena. Read the perm via sTiles_return_perm_vec.
+// A later sTiles_init (numeric) with the perm forced completes the factor.
+int sTiles_init_symbolic(void **obj) {
+    g_symbolic_only = 1;
+    int rc = sTiles_init(obj);
+    g_symbolic_only = 0;
+    return rc;
+}
+
 int sTiles_init_group(int group_index, void **obj) {
 
     if (!obj || !(*obj)) {
@@ -3557,7 +3631,16 @@ int sTiles_init_group(int group_index, void **obj) {
                && s->stiles_groups[group_index].stiles_calls[0].row_indices == nullptr) {
         sTiles::Logger::info("│  - Skipping preprocessing for group " + std::to_string(group_index) + " (no graph assigned)");
     } else {
-        sTiles_preprocess_group(group_index, (sTiles_object**)obj, s->schemes);
+        if (sTiles_preprocess_group(group_index, (sTiles_object**)obj, s->schemes) != EXIT_SUCCESS) {
+            // Preprocessing (symbolic/ordering) failed for this group. Propagate
+            // the failure so the caller aborts instead of proceeding into chol
+            // with an unresolved scheme (which would cascade through pdpotrf).
+            // The failing scheme(s) are flagged preprocess_failed, so chol/solve/
+            // selinv/logdet also refuse to run if the caller ignores this return.
+            sTiles::Logger::error("sTiles_init_group: preprocessing failed for group ", group_index,
+                                  "; factorization will not be attempted (see preceding error).");
+            return -1;
+        }
     }
 
     // After preprocessing, every scheme's numActiveTiles is finalized.
@@ -4074,19 +4157,19 @@ sTiles::StatusCode sTiles_setup_groups(sTiles_object **obj,
 
 void configure_tile_size() {
 
-    if(stiles_control_params[1] < 0) {
+    if(stiles_control_params[sTiles::param::UserTileSize] < 0) {
 
-        stiles_control_params[1] = sTiles::get::auto_tile_size();
+        stiles_control_params[sTiles::param::UserTileSize] = sTiles::get::auto_tile_size();
 
     }else{
 
-        sTiles::Logger::info("│ ✓ User-specified tile size selected: ", stiles_control_params[1]);
+        sTiles::Logger::info("│ ✓ User-specified tile size selected: ", stiles_control_params[sTiles::param::UserTileSize]);
 
     }
 
-    if(stiles_control_params[5] < 0) {
+    if(stiles_control_params[sTiles::param::TileOrderingThreshold] < 0) {
 
-        stiles_control_params[5] = stiles_control_params[1] / 2;
+        stiles_control_params[sTiles::param::TileOrderingThreshold] = stiles_control_params[sTiles::param::UserTileSize] / 2;
 
     }
 
@@ -4113,6 +4196,10 @@ static int create_internal(void **obj,
     sTiles::internal::verify_expiry();
     sTiles::internal::init_time_tracking();
     sTiles::internal::cache_validity_state();  // Cache for zero-overhead checks later
+
+    // Warn once about set-but-unrecognized STILES_* environment variables
+    // (a misspelled override is silently inert otherwise).
+    stiles_env_validate();
 
     // 1. Validate input pointer
     if (!obj) {

@@ -55,7 +55,11 @@ struct MemoryEstimate {
 
     double metadata_gb;           // Memory for tile metadata, lookup tables
     double workspace_gb;          // Memory for thread workspaces
-    double total_gb;              // Total estimated memory
+    double symbolic_pattern_gb;   // L_rowind (nnz_factor*4) + L_colptr ((dim+1)*8), ordering-layer
+    double solve_pack_gb;         // Packed-CSC solve buffers: L_values (nnz_factor*8) [+ L_src if <= ceiling]
+    double total_gb;              // Steady factor resident (chol only, no packed solve)
+    double total_solve_gb;        // Factor + packed solve resident (total_gb + solve_pack_gb)
+    double total_peak_gb;         // Max RSS to provision (steady + larger of {analyze COO transient, solve pack})
     double gpu_total_gb;          // GPU-specific memory requirement
     double gpu_fac_only_gb;       // GPU memory for factorization only (no inverse)
 
@@ -369,11 +373,60 @@ inline MemoryEstimate calculate_memory_exact(const TiledMatrix* scheme, const sT
     const double workspace_per_thread = static_cast<double>(scheme->tile_size) * static_cast<double>(scheme->tile_size) * bytes_per_double * 4.0;
     est.workspace_gb = (static_cast<double>(num_threads) * workspace_per_thread) / gb_divisor;
 
-    // Total CPU memory (all arrays)
-    // Note: semisparse is always allocated on CPU for preprocessing, regardless of tile_type_mode
-    est.total_gb = est.dense_tiles_gb + est.inverse_tiles_gb + est.saved_tiles_gb +
-                   est.semisparse_tiles_gb + est.semisparse_indices_gb +
-                   est.metadata_gb + est.workspace_gb;
+    // Symbolic pattern (L_rowind int + L_colptr int64): allocated by the ordering
+    // layer, NOT in any tile array, so it must be added explicitly. Sparse-tiled
+    // variants (0/3) only; dense variants (1/2) carry no CSC pattern.
+    if (variant != 1 && variant != 2 && scheme->nnz_factor > 0) {
+        est.symbolic_pattern_gb =
+            (static_cast<double>(scheme->nnz_factor) * 4.0
+             + static_cast<double>(scheme->dim + 1) * 8.0) / gb_divisor;
+    }
+
+    // Actual factor tile storage. For the sparse-tiled variants the tiles are
+    // allocated by chunked_tile_element_count as banded (diagonal, (upper_bw+1)*h)
+    // + semisparse (off-diagonal, sa*h) — i.e. banded_diagonal_gb + offdiag_semisparse_gb.
+    // dense_tiles_gb (all tiles priced as h*w) is NOT allocated in these modes; it is
+    // only the legacy dense-mode comparison and the basis for the (dense) inverse
+    // tiles, so it must NOT be summed into the factor total. Variants 1/2 do use the
+    // full dense tiles.
+    const double factor_tiles_gb = (variant == 1 || variant == 2)
+        ? est.dense_tiles_gb
+        : (est.banded_diagonal_gb + est.offdiag_semisparse_gb);
+
+    // Packed-CSC solve buffers, allocated by sTiles_packing for the fast solve:
+    //   L_values = nnz_factor doubles (always packed for semisparse/dense),
+    //   L_src    = nnz_factor pointers, ONLY when it fits the pack-cache ceiling
+    //              (csc_solve.cpp g_l_src_max_bytes, default 2 GiB); above that it
+    //              falls back to the per-entry kernel and L_src is NOT allocated
+    //              (e.g. bern's 48 GB exceeds 2 GiB, so L_src is skipped).
+    if (variant != 1 && variant != 2 && scheme->nnz_factor > 0) {
+        const double l_values_bytes = static_cast<double>(scheme->nnz_factor) * 8.0;
+        const long long l_src_bytes = static_cast<long long>(scheme->nnz_factor) * 8LL;
+        const long long l_src_ceiling = 2LL << 30;   // matches g_l_src_max_bytes default
+        const double l_src_gb = (l_src_bytes <= l_src_ceiling)
+                              ? static_cast<double>(scheme->nnz_factor) * 8.0 : 0.0;
+        est.solve_pack_gb = (l_values_bytes + l_src_gb) / gb_divisor;
+    }
+
+    // STEADY factor resident (chol only, no packed solve). inverse/saved are 0
+    // unless compute_inverse (selinv), where they correctly use the dense basis.
+    est.total_gb = factor_tiles_gb
+                 + est.inverse_tiles_gb + est.saved_tiles_gb
+                 + est.semisparse_indices_gb
+                 + est.symbolic_pattern_gb
+                 + est.metadata_gb + est.workspace_gb;
+
+    // Factor + packed solve resident (what INLA holds for repeated chol+solve).
+    est.total_solve_gb = est.total_gb + est.solve_pack_gb;
+
+    // Max RSS to provision. The two large auxiliary allocations are SEQUENTIAL and
+    // never coexist: the ANALYZE-time COO transient (result.ri + L_row + L_col =
+    // 3*nnz_factor ints) is freed before sTiles_packing allocates the solve buffers.
+    // So the peak is the steady factor plus the LARGER of the two.
+    const double analyze_transient_gb = (variant != 1 && variant != 2)
+        ? (3.0 * static_cast<double>(scheme->nnz_factor) * 4.0) / gb_divisor
+        : 0.0;
+    est.total_peak_gb = est.total_gb + std::max(analyze_transient_gb, est.solve_pack_gb);
 
     // GPU memory calculation depends on tile_type_mode:
     // - Mode 0 (dense): GPU uses only dense tiles - semisparse is NOT used for GPU computations
@@ -468,7 +521,19 @@ inline void print_memory_estimate(const MemoryEstimate& est) {
 
     Logger::timing("│       metadata=", format_memory_size(est.metadata_gb),
                    ", workspaces=", format_memory_size(est.workspace_gb));
-    Logger::timing("│       TOTAL (CPU)=", format_memory_size(est.total_gb));
+    if (est.symbolic_pattern_gb > 0) {
+        Logger::timing("│       symbolic_pattern (L_rowind+L_colptr)=",
+                       format_memory_size(est.symbolic_pattern_gb));
+    }
+    if (est.solve_pack_gb > 0) {
+        Logger::timing("│       solve_pack (L_values[+L_src])=",
+                       format_memory_size(est.solve_pack_gb));
+    }
+    Logger::timing("│       TOTAL (factor only, steady)=", format_memory_size(est.total_gb));
+    if (est.total_solve_gb > est.total_gb) {
+        Logger::timing("│       TOTAL (factor+solve, steady)=", format_memory_size(est.total_solve_gb));
+    }
+    Logger::timing("│       TOTAL (PEAK, provision --mem)=", format_memory_size(est.total_peak_gb));
 
     // GPU memory comparison
     if (est.gpu_fac_only_gb > 0) {
@@ -492,7 +557,9 @@ inline void print_memory_estimate(const MemoryEstimate& est) {
  */
 inline bool memory_fits(const MemoryEstimate& est, double available_gb, double safety_margin = 0.1) {
     const double usable_gb = available_gb * (1.0 - safety_margin);
-    return est.total_gb <= usable_gb;
+    // Must fit the PEAK (ANALYZE-time transient), not just the steady factor.
+    // Early estimates leave total_peak_gb=0, so fall back to total_gb via max().
+    return std::max(est.total_gb, est.total_peak_gb) <= usable_gb;
 }
 
 } // namespace memory

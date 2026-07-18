@@ -219,9 +219,9 @@ namespace sTiles {
             #pragma omp single
             {
                 if (actual_threads != worldsize) {
-                    std::cerr << "[sTiles WARNING] OMP parallel region: requested " << worldsize
-                              << " threads but got " << actual_threads
-                              << ". Check omp_set_max_active_levels() for nested parallelism." << std::endl;
+                    sTiles::Logger::warning("OMP parallel region: requested ", worldsize,
+                              " threads but got ", actual_threads,
+                              ". Check omp_set_max_active_levels() for nested parallelism.");
                 }
                 #ifdef STILES_DEBUG_OMP
                 std::cerr << "[OMP_DEBUG] omp_dpotrf: inside parallel region with " << actual_threads
@@ -286,6 +286,16 @@ extern "C" {
         static int* stiles_control_params = sTiles_get_params();
         TiledMatrix* scheme = s->schemes[global_index_mapped];
 
+        // Refuse to factor a scheme whose preprocessing failed (e.g. auto-mode
+        // could not resolve a tile mode, or fill-in exceeded the 2B nnz guard).
+        // Without this, an unresolved scheme falls through to pthreads_pdpotrf
+        // with tile_type_mode==3 and spams "no in-pdpotrf path" once per worker.
+        if (!scheme || scheme->preprocess_failed) {
+            sTiles::Logger::error("sTiles_chol: group ", group_index, " call ", call_index,
+                " was not successfully preprocessed; skipping factorization.");
+            return -1;
+        }
+
         // ── Sparse-module dispatch (tile_type_mode == 2) ─────────────────────
         // Routes through tools/compute/sparse_dpotrf.cpp. Defaults to OMP
         // (persistent thread pool); user can force pthreads by setting
@@ -294,16 +304,18 @@ extern "C" {
         // fine-grained per-rank work.
         if (scheme->sparse_handle) {
             sTiles::StatusCode sp_status =
-                (stiles_control_params[8] == -1)
+                (stiles_control_params[sTiles::param::UseOMP] == -1)
                     ? sTiles::pthreads_sparse_dpotrf(global_index_mapped, scheme)
                     : sTiles::omp_sparse_dpotrf(global_index_mapped, scheme);
             s->schemes[global_index_mapped]->timings[0] = omp_get_wtime() - etime;
+            sTiles::Logger::timingf("\u2502   \u21aa Chol (group %d, call %d): %.6f s",
+                group_index, call_index, s->schemes[global_index_mapped]->timings[0]);
             return (sp_status == sTiles::StatusCode::Success) ? 0 : -1;
         }
 
         const int factorization_variant = scheme->factorization_variant;
-        const int tile_type_mode = stiles_control_params[3];  // 0=dense, 1=semisparse
-        const int gpu_comparison_mode = stiles_control_params[10]; // 0=GPU-only, 1=GPU with CPU validation
+        const int tile_type_mode = stiles_scheme_tile_mode(scheme);  // 0=dense, 1=semisparse
+        const int gpu_comparison_mode = stiles_control_params[sTiles::param::GpuCompareMode]; // 0=GPU-only, 1=GPU with CPU validation
 
         // Select parallelization backend: OMP if param[8]==1, otherwise pthreads (default)
         sTiles::StatusCode status;
@@ -344,7 +356,7 @@ extern "C" {
             if (gpu_comparison_mode != 0) {
                 sTiles::Logger::timing("│   ↪ GPU Validation: Running CPU factorization");
                 double cpu_start = omp_get_wtime();
-                if (stiles_control_params[8] == 1) {
+                if (stiles_control_params[sTiles::param::UseOMP] == 1) {
                     status = sTiles::omp_dpotrf(global_index, scheme);
                 } else {
                     status = sTiles::pthreads_dpotrf(global_index, scheme);
@@ -507,7 +519,7 @@ extern "C" {
                 if (gpu_comparison_mode != 0) {
                     sTiles::Logger::timing("│   ↪ GPU Validation: Running CPU factorization");
                     double cpu_start = omp_get_wtime();
-                    if (stiles_control_params[8] == 1) {
+                    if (stiles_control_params[sTiles::param::UseOMP] == 1) {
                         status = sTiles::omp_dpotrf(global_index, scheme);
                     } else {
                         status = sTiles::pthreads_dpotrf(global_index, scheme);
@@ -681,7 +693,7 @@ extern "C" {
                     }
                 }
                 // Standard CPU path
-                if (stiles_control_params[8] == 1) {
+                if (stiles_control_params[sTiles::param::UseOMP] == 1) {
                     status = sTiles::omp_dpotrf(global_index, scheme);
                 } else {
                     status = sTiles::pthreads_dpotrf(global_index, scheme);
@@ -691,7 +703,7 @@ extern "C" {
         #else
         // Non-GPU build: standard CPU path
         {
-            if (stiles_control_params[8] == 1) {
+            if (stiles_control_params[sTiles::param::UseOMP] == 1) {
                 status = sTiles::omp_dpotrf(global_index, scheme);
             } else {
                 status = sTiles::pthreads_dpotrf(global_index, scheme);
@@ -705,6 +717,8 @@ extern "C" {
         // subsequent solves will benefit from the csc_dtrsm fast path.
 
         s->schemes[global_index_mapped]->timings[0] = omp_get_wtime() - etime;
+        sTiles::Logger::timingf("\u2502   \u21aa Chol (group %d, call %d): %.6f s",
+            group_index, call_index, s->schemes[global_index_mapped]->timings[0]);
 
         // Any previously packed L_values now mirrors the *old* factor. Mark
         // the CSC buffer stale so the solve gate misses until sTiles_packing

@@ -300,7 +300,7 @@ using PagedState = State::Paged;
  */
 int countActiveTiles(const int* row_indices,
                      const int* col_indices,
-                     int nnz,
+                     int64_t nnz,
                      int n,
                      int tile_size,
                      Method method,

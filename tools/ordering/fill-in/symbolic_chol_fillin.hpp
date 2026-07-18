@@ -19,6 +19,7 @@
 
 #include <vector>
 #include <algorithm>
+#include <cstdint>
 #include "../../sort/stiles_sort_dispatch.hpp"
 
 namespace sTiles {
@@ -81,13 +82,16 @@ inline void compute_etree(int                      n,
 //           Pass 0 to disable the check (not recommended for large matrices
 //           without a fill-reducing ordering).
 // ---------------------------------------------------------------------------
-inline int symbolic_chol_fillin(
-    int                      n,
-    const std::vector<int>&  colptr_A,
-    const std::vector<int>&  rowind_A,
-    std::vector<int>&        colptr_L,
-    std::vector<int>&        rowind_L,
-    size_t                   max_nnz = 0)
+// colptr_L holds 64-bit cumulative offsets (can exceed INT_MAX); rowind_L
+// elements stay 32-bit (row indices < n). Returns nnz(L) as int64, or -1 if it
+// exceeds max_nnz.
+inline int64_t symbolic_chol_fillin(
+    int                          n,
+    const std::vector<int>&      colptr_A,
+    const std::vector<int>&      rowind_A,
+    std::vector<int64_t>&        colptr_L,
+    std::vector<int>&            rowind_L,
+    size_t                       max_nnz = 0)
 {
     // ---- Step 1: elimination tree ----
     std::vector<int> parent;
@@ -140,7 +144,7 @@ inline int symbolic_chol_fillin(
         // Merge each direct etree child k
         for (int ci = child_ptr[j]; ci < child_ptr[j + 1]; ++ci) {
             int k = child_list[ci];
-            for (int p = colptr_L[k]; p < colptr_L[k + 1]; ++p) {
+            for (int64_t p = colptr_L[k]; p < colptr_L[k + 1]; ++p) {
                 int i = rowind_L[p];
                 if (i >= j && marker[i] != j) {
                     marker[i] = j;
@@ -161,21 +165,22 @@ inline int symbolic_chol_fillin(
         for (int row : col_j)
             rowind_L.push_back(row);
 
-        colptr_L[j + 1] = static_cast<int>(rowind_L.size());
+        colptr_L[j + 1] = static_cast<int64_t>(rowind_L.size());
     }
 
     rowind_L.shrink_to_fit();
-    return static_cast<int>(rowind_L.size());
+    return static_cast<int64_t>(rowind_L.size());
 }
 
 // Count only — no pattern stored, same budget check.
-inline int symbolic_chol_fillin_count(
+inline int64_t symbolic_chol_fillin_count(
     int                      n,
     const std::vector<int>&  colptr_A,
     const std::vector<int>&  rowind_A,
     size_t                   max_nnz = 0)
 {
-    std::vector<int> colptr_L, rowind_L;
+    std::vector<int64_t> colptr_L;
+    std::vector<int>     rowind_L;
     return symbolic_chol_fillin(n, colptr_A, rowind_A, colptr_L, rowind_L, max_nnz);
 }
 

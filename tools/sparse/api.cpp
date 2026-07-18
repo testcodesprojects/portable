@@ -18,6 +18,15 @@
  * `preprocess_primary_sparse`). The `element_perm` it produces is what we
  * receive in `sTiles_sparse_set_user_permutation`; the sparse module never
  * runs its own ordering.
+ *
+ * @project sTiles (Sparse Tiles Library)
+ * @author  Esmail Abdul Fattah, King Abdullah University of Science and Technology (KAUST)
+ * @contact esmail.abdulfattah@kaust.edu.sa
+ * @version 3.0.0
+ * @date 1 1 2026
+ * @license Proprietary
+ *
+ * Copyright (c) 2026, Esmail Abdul Fattah, KAUST. All rights reserved.
  */
 
 #include "api.hpp"
@@ -340,6 +349,30 @@ int assign_graph(void** obj, int n, int nnz,
     // partition depends on num_cores, which is fixed at create time).
     h->L_cs.allocate(h->sym, h->group_id);
     sTiles::Logger::timing("│   ↪ Allocate L cell store: ", (omp_get_wtime() - t_alloc), " s");
+
+    // Task-partition width: clamp the rank count by problem size before ANY
+    // task collection (numeric here, selinv/solve reuse h->num_cores later).
+    // Partitioning a tiny factor across many ranks makes cross-rank
+    // dependency spin-waits dwarf the numeric work (a 577-var / ~30k-nnz
+    // factor took ~1.5 s per chol at 8 ranks vs ~0.01 s serial). Require
+    // enough work per rank: >= STILES_SPARSE_NNZ_PER_RANK nnz(L) (default
+    // 200k) and >= 4 supernodes per rank; big factors keep the full width.
+    {
+        long long per_rank = 200000;
+        if (const char* e = std::getenv("STILES_SPARSE_NNZ_PER_RANK")) {
+            const long long v = std::atoll(e);
+            if (v > 0) per_rank = v;
+        }
+        const long long nnzL = static_cast<long long>(h->sym.nnz_l);
+        int cap = static_cast<int>(std::min(nnzL / per_rank,
+                                            static_cast<long long>(h->sym.n_super / 4)));
+        if (cap < 1) cap = 1;
+        if (h->num_cores > cap) {
+            sTiles::Logger::timing("│   ↪ Sparse ranks clamped ", h->num_cores, " → ", cap,
+                                   " (nnz(L)=", nnzL, ", supernodes=", h->sym.n_super, ")");
+            h->num_cores = cap;
+        }
+    }
 
     const double t_tasks = omp_get_wtime();
     sTiles::sparse::collect_tasks(h->sym, h->L_cs, h->num_cores, h->tasks);

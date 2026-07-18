@@ -1,5 +1,34 @@
-#ifndef SPS_SCHED_SELINV_HPP
-#define SPS_SCHED_SELINV_HPP
+/**
+ * @file    selinv.hpp
+ * @brief   Selected inversion (Takahashi) for the sparse module.
+ *
+ * @project sTiles (Sparse Tiles Library)
+ * @author  Esmail Abdul Fattah, King Abdullah University of Science and Technology (KAUST)
+ * @contact esmail.abdulfattah@kaust.edu.sa
+ * @version 3.0.0
+ * @date 1 1 2026
+ * @license Proprietary
+ *
+ * @note This file is part of the sTiles library, a proprietary software package.
+ *       Redistribution or modification without prior permission is prohibited.
+ *
+ * Copyright (c) 2026, Esmail Abdul Fattah, KAUST. All rights reserved.
+ *
+ * @license
+ * This software is proprietary and confidential. Unauthorized copying, distribution, or modification
+ * of this software, via any medium, is strictly prohibited. Permission is granted to use the software
+ * in binary form for non-commercial purposes only, provided that this copyright notice and permission
+ * notice are included in all copies or substantial portions of the software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+ * NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+#ifndef _STILES_SPARSE_SELINV_HPP_
+#define _STILES_SPARSE_SELINV_HPP_
 
 #include "symbolic.hpp"
 #include "supernode.hpp"
@@ -48,4 +77,4 @@ void selinv(const Symbolic& s, const CellStore& L_cs, CellStore& Z_cs);
 
 }}  // namespace sTiles::sparse
 
-#endif  // SPS_SCHED_SELINV_HPP
+#endif  // _STILES_SPARSE_SELINV_HPP_

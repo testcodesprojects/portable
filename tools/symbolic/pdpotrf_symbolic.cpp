@@ -70,7 +70,7 @@ namespace sTiles { namespace preprocess {
     void dpotrf_expansion_from_chol_tasks_symbolic_semisparse_no_debug(TiledMatrix *tiledMatrix, stiles_context_t *stile){
 
         //std::cout << " STILES_SIZE " << STILES_SIZE << std::endl;
-        const int bw_mode = sTiles_get_params()[15];
+        const int bw_mode = sTiles_get_params()[sTiles::param::BandwidthMode];
         const int rank = STILES_RANK;
         const int world = STILES_SIZE;
 
@@ -119,8 +119,8 @@ namespace sTiles { namespace preprocess {
 
         const auto &tasks   = sTiles::get_chol_tasks(tiledMatrix);
         const auto &offsets = sTiles::get_chol_task_offsets(tiledMatrix);
-        const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
-        const int end   = (rank + 1 < static_cast<int>(offsets.size()))
+        const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
+        const long long end   = (rank + 1 < static_cast<int>(offsets.size()))
                             ? offsets[rank + 1]
                             : static_cast<int>(tasks.size());
 
@@ -128,7 +128,7 @@ namespace sTiles { namespace preprocess {
         // std::cout << " start " << start << std::endl;
         // std::cout << " end " << end << std::endl;
 
-        for (int idx = start; idx < end; ++idx) {
+        for (long long idx = start; idx < end; ++idx) {
             const std::array<int,7> &t = tasks[idx];
             const int myroutine = t[0];
             const int m        = t[1];
@@ -221,9 +221,9 @@ namespace sTiles { namespace preprocess {
     void dpotrf_expansion_from_chol_tasks_symbolic_semisparse(TiledMatrix *tiledMatrix, stiles_context_t *stile){
 
         //std::cout << " STILES_SIZE " << STILES_SIZE << std::endl;
-        const int bw_mode = sTiles_get_params()[15];
+        const int bw_mode = sTiles_get_params()[sTiles::param::BandwidthMode];
         if (STILES_RANK == 0) {
-            //std::fprintf(stderr, "[symbolic_semisparse] bw_mode=%d (%s)\n",
+            //sTiles::Logger::errorf("[symbolic_semisparse] bw_mode=%d (%s)",
             //             bw_mode, bw_mode == 1 ? "tight" : "conservative");
         }
         const int rank = STILES_RANK;
@@ -274,8 +274,8 @@ namespace sTiles { namespace preprocess {
 
         const auto &tasks   = sTiles::get_chol_tasks(tiledMatrix);
         const auto &offsets = sTiles::get_chol_task_offsets(tiledMatrix);
-        const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
-        const int end   = (rank + 1 < static_cast<int>(offsets.size()))
+        const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
+        const long long end   = (rank + 1 < static_cast<int>(offsets.size()))
                             ? offsets[rank + 1]
                             : static_cast<int>(tasks.size());
 
@@ -283,7 +283,7 @@ namespace sTiles { namespace preprocess {
         // std::cout << " start " << start << std::endl;
         // std::cout << " end " << end << std::endl;
 
-        for (int idx = start; idx < end; ++idx) {
+        for (long long idx = start; idx < end; ++idx) {
             const std::array<int,7> &t = tasks[idx];
             const int myroutine = t[0];
             const int m        = t[1];
@@ -308,20 +308,20 @@ namespace sTiles { namespace preprocess {
 
             // // DEBUG helper lambda to print tile state
             // auto print_tile_state = [](const char* label, int tile_idx, const SemisparseTileMetaCore& meta) {
-            //     std::fprintf(stderr, "  %s Tile[%d]: fa=%d, la=%d, sa=%d, upper_bw=%d\n",
+            //     sTiles::Logger::errorf("  %s Tile[%d]: fa=%d, la=%d, sa=%d, upper_bw=%d",
             //                  label, tile_idx, meta.fa, meta.la, meta.sa, meta.upper_bw);
-            //     std::fprintf(stderr, "    acol[%zu]: ", meta.acol.size());
+            //     sTiles::Logger::errorf("    acol[%zu]: ", meta.acol.size());
             //     for (std::size_t c = 0; c < meta.acol.size() && c < 15; ++c) {
-            //         std::fprintf(stderr, "%d ", meta.acol[c]);
+            //         sTiles::Logger::errorf("%d ", meta.acol[c]);
             //     }
-            //     if (meta.acol.size() > 15) std::fprintf(stderr, "...");
-            //     std::fprintf(stderr, "\n");
-            //     std::fprintf(stderr, "    aind[%zu]: ", meta.aind.size());
+            //     if (meta.acol.size() > 15) sTiles::Logger::errorf("...");
+            //     sTiles::Logger::errorf("");
+            //     sTiles::Logger::errorf("    aind[%zu]: ", meta.aind.size());
             //     for (std::size_t i = 0; i < meta.aind.size() && i < 15; ++i) {
-            //         std::fprintf(stderr, "%d ", meta.aind[i]);
+            //         sTiles::Logger::errorf("%d ", meta.aind[i]);
             //     }
-            //     if (meta.aind.size() > 15) std::fprintf(stderr, "...");
-            //     std::fprintf(stderr, "\n");
+            //     if (meta.aind.size() > 15) sTiles::Logger::errorf("...");
+            //     sTiles::Logger::errorf("");
             // };
 
             switch (myroutine) {
@@ -331,7 +331,7 @@ namespace sTiles { namespace preprocess {
 
                     // {
                     //     std::lock_guard<std::mutex> lock(debug_print_mutex);
-                    //     std::fprintf(stderr, "\n--- Task[%d] POTRF: tile=%d (k=%d) ---\n", idx, index1, k);
+                    //     sTiles::Logger::errorf("\n--- Task[%d] POTRF: tile=%d (k=%d) ---", idx, index1, k);
                     //     print_tile_state("BEFORE", index1, Ameta);
                     // }
 
@@ -355,7 +355,7 @@ namespace sTiles { namespace preprocess {
 
                     // {
                     //     std::lock_guard<std::mutex> lock(debug_print_mutex);
-                    //     std::fprintf(stderr, "\n--- Task[%d] SYRK: A=%d, B=%d (m=%d,k=%d,n=%d) ---\n", idx, index2, index1, m, k, n);
+                    //     sTiles::Logger::errorf("\n--- Task[%d] SYRK: A=%d, B=%d (m=%d,k=%d,n=%d) ---", idx, index2, index1, m, k, n);
                     //     print_tile_state("BEFORE A", index2, Ameta);
                     //     print_tile_state("INPUT  B", index1, Bmeta);
                     // }
@@ -378,7 +378,7 @@ namespace sTiles { namespace preprocess {
 
                     // {
                     //     std::lock_guard<std::mutex> lock(debug_print_mutex);
-                    //     std::fprintf(stderr, "\n--- Task[%d] TRSM: A=%d, B=%d (m=%d,k=%d) ---\n", idx, index1, index2, m, k);
+                    //     sTiles::Logger::errorf("\n--- Task[%d] TRSM: A=%d, B=%d (m=%d,k=%d) ---", idx, index1, index2, m, k);
                     //     print_tile_state("BEFORE A", index1, Ameta);
                     //     print_tile_state("INPUT  B", index2, Bmeta);
                     // }
@@ -413,7 +413,7 @@ namespace sTiles { namespace preprocess {
 
                     // {
                     //     std::lock_guard<std::mutex> lock(debug_print_mutex);
-                    //     std::fprintf(stderr, "\n--- Task[%d] GEMM: A=%d, B=%d, C=%d (m=%d,k=%d,n=%d) ---\n", idx, index1, index2, index3, m, k, n);
+                    //     sTiles::Logger::errorf("\n--- Task[%d] GEMM: A=%d, B=%d, C=%d (m=%d,k=%d,n=%d) ---", idx, index1, index2, index3, m, k, n);
                     //     print_tile_state("INPUT  A", index1, Ameta);
                     //     print_tile_state("INPUT  B", index2, Bmeta);
                     //     print_tile_state("BEFORE C", index3, Cmeta);
@@ -445,7 +445,7 @@ namespace sTiles { namespace preprocess {
             int count_zero = 0, count_nonzero = 0;
             int max_bw = 0, sum_bw = 0;
             const int num_active = tiledMatrix->numActiveTiles;
-            //std::fprintf(stderr, "[symbolic_semisparse] diagonal tile upper_bw (bw_mode=%d, active=%d):\n", bw_mode, num_active);
+            //sTiles::Logger::errorf("[symbolic_semisparse] diagonal tile upper_bw (bw_mode=%d, active=%d):", bw_mode, num_active);
             for (int idx = 0; idx < num_active; ++idx) {
                 const auto &meta = tiledMatrix->tileMetaCore[idx];
                 if (meta.row != meta.col) continue;
@@ -455,7 +455,7 @@ namespace sTiles { namespace preprocess {
                 if (bw > max_bw) max_bw = bw;
                 sum_bw += bw;
             }
-            // std::fprintf(stderr, "  summary: %d diag tiles with bw>0, %d with bw=0, max_bw=%d, avg_bw=%.1f\n",
+            // sTiles::Logger::errorf("  summary: %d diag tiles with bw>0, %d with bw=0, max_bw=%d, avg_bw=%.1f",
             //              count_nonzero, count_zero, max_bw,
             //              (count_nonzero + count_zero > 0) ? (double)sum_bw / (count_nonzero + count_zero) : 0.0);
         }
@@ -486,8 +486,8 @@ namespace sTiles { namespace preprocess {
 
         const auto &tasks   = sTiles::get_chol_tasks(tiledMatrix);
         const auto &offsets = sTiles::get_chol_task_offsets(tiledMatrix);
-        const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
-        const int end   = (rank + 1 < static_cast<int>(offsets.size()))
+        const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
+        const long long end   = (rank + 1 < static_cast<int>(offsets.size()))
                             ? offsets[rank + 1]
                             : static_cast<int>(tasks.size());
 
@@ -495,7 +495,7 @@ namespace sTiles { namespace preprocess {
         // std::cout << " start " << start << std::endl;
         // std::cout << " end " << end << std::endl;
 
-        for (int idx = start; idx < end; ++idx) {
+        for (long long idx = start; idx < end; ++idx) {
             const std::array<int,7> &t = tasks[idx];
             const int myroutine = t[0];
             const int m        = t[1];
@@ -601,19 +601,19 @@ namespace sTiles { namespace preprocess {
         sTiles::unpack_args(stile, tiledMatrix);
 
         if (!tiledMatrix) {
-            std::cout << "Error: null tiledMatrix in stiles_pdpotrf" << std::endl;
+            sTiles::Logger::error("null tiledMatrix in symbolic pdpotrf");
             return;
         }
 
         if (tiledMatrix->use_boosted_e_trick) {
             if (tiledMatrix->red_tree_separator_level > 0) {
-                std::cout << "FIX ME " << std::endl;
+                sTiles::Logger::error("SafeMode symbolic tree-reduction path is not implemented.");
                 exit(0);
             } else {
                 sTiles::preprocess::dpotrf_expansion_from_chol_tasks_symbolic_semisparse(tiledMatrix, stile);
             }
         } else {
-            std::cout << "FIXME: SafeMode without boosted_e_trick is not implemented." << std::endl;
+            sTiles::Logger::error("SafeMode without boosted_e_trick is not implemented.");
         }
 
     }
@@ -624,19 +624,19 @@ namespace sTiles { namespace preprocess {
         sTiles::unpack_args(stile, tiledMatrix);
 
         if (!tiledMatrix) {
-            std::cout << "Error: null tiledMatrix in stiles_pdpotrf" << std::endl;
+            sTiles::Logger::error("null tiledMatrix in symbolic pdpotrf");
             return;
         }
 
         if (tiledMatrix->use_boosted_e_trick) {
             if (tiledMatrix->red_tree_separator_level > 0) {
-                std::cout << "FIX ME " << std::endl;
+                sTiles::Logger::error("SafeMode symbolic tree-reduction path is not implemented.");
                 exit(0);
             } else {
                 sTiles::preprocess::dpotrf_expansion_from_chol_tasks_symbolic_sparse(tiledMatrix, stile);
             }
         } else {
-            std::cout << "FIXME: SafeMode without boosted_e_trick is not implemented." << std::endl;
+            sTiles::Logger::error("SafeMode without boosted_e_trick is not implemented.");
         }
 
     }

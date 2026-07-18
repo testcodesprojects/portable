@@ -44,7 +44,7 @@ enum class CholStatus {
 // Complexity matches the FLOP count of the symbolic factor (sum over
 // columns of (col nnz)^2-ish, exact value depends on the pattern).
 CholStatus chol_numeric(int           n,
-                        const int*    L_colptr,
+                        const int64_t*    L_colptr,
                         const int*    L_rowind,
                         double*       L_values);
 

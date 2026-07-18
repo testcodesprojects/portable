@@ -39,6 +39,8 @@
   #define STILES_HAVE_SOURCE_LOCATION 0
 #endif
 #include <cstdlib>         // For std::exit
+#include <cstdio>          // For std::snprintf (printf-style variants)
+#include <regex>           // For [TIME] row alignment
 #include <chrono>          // For timestamps
 #include <mutex>           // For thread-safe stream writes
 #include <vector>          // For holding extracted tags
@@ -90,6 +92,25 @@ struct SourceLocation {
 #endif
 
 // --- Log Level Enum ---
+//
+// The DEFAULT runtime level is Time: a default-level run shows the [TIME]
+// lines (where the time goes: ordering bake-off, symbolic, per-phase
+// timings), plus warnings and errors on stderr. Raise to Info for the
+// progress boxes, Debug/Trace for internals; sTiles_set_log_level(-1)
+// (Level::None) silences everything except errors.
+//
+//   level        stdout                          stderr
+//   ----------   -----------------------------   -------------------
+//   None (-1)    (nothing)                       errors
+//   TimingOnly   [TIME] lines only               warnings + errors
+//   Time (dflt)  [TIME] lines                    warnings + errors
+//   Info         [TIME] + [INFO] progress        warnings + errors
+//   Debug/Trace  + [DEBUG] / [TRACE]             warnings + errors
+//
+// Library code must log through this Logger — never printf/std::cout
+// directly — so output respects the level, carries a timestamp, and stays
+// grep-stable. printf-style call sites can use the *f variants
+// (Logger::errorf("info=%d", info)) which take classic format strings.
 enum class Level {
     TimingOnly = STILES_LOG_LEVEL_TIMEONLY,                 // Emit timing markers only
     None       = STILES_LOG_LEVEL_NONE,
@@ -173,22 +194,170 @@ public:
 #endif
     }
 
-    template<typename... Args> static void warning(Args&&... args) {
-#if STILES_LOG_LEVEL >= STILES_LOG_LEVEL_INFO
-        if (static_cast<int>(sTiles::getLevel()) >= static_cast<int>(Level::Info)) {
-            log_with_context_impl("[WARNING]", STILES_CURRENT_SOURCE_LOCATION, std::forward<Args>(args)...);
+    // warning/error/fatal are class templates constructed via CTAD (the calls
+    // read exactly like function calls: Logger::warning("...")). The struct +
+    // deduction-guide shape exists so the SourceLocation default argument is
+    // evaluated at the CALL SITE — a plain variadic function evaluated it
+    // inside the logger, so every context line pointed at stiles_logger.hpp
+    // instead of the caller. (With the pre-C++20 __FILE__ fallback the
+    // location still degrades to this header; that path has no better option.)
+    //
+    // CLASS-SCOPE deduction guides need a recent compiler (GCC >= 14 verified;
+    // ibex's GCC 11 rejects them). Older compilers take the plain-function
+    // fallback below — identical behavior except the context line points at
+    // this header instead of the caller.
+
+    // ---- printf-style variants -------------------------------------------
+    //
+    // Drop-in replacements for raw printf/fprintf call sites: same classic
+    // format string and arguments (no trailing '\n' needed), but the output
+    // is routed through the logger, so it respects the runtime level, takes
+    // the stream lock, and carries the usual label + timestamp.
+    //   std::fprintf(stderr, "failed with info=%d\n", info);
+    //     -> sTiles::Logger::errorf("failed with info=%d", info);
+
+    template<typename... Args>
+    static std::string format_message(const char* fmt, Args... args) {
+        char buf[1024];
+        if constexpr (sizeof...(Args) == 0) {
+            std::snprintf(buf, sizeof(buf), "%s", fmt);
+        } else {
+            std::snprintf(buf, sizeof(buf), fmt, args...);
         }
+        return std::string(buf);
+    }
+
+    template<typename... Args> static void timingf(const char* fmt, Args... args) {
+        const auto level = sTiles::getLevel();
+        if (level == Level::TimingOnly || static_cast<int>(level) >= static_cast<int>(Level::Time)) {
+            log_impl("[TIME]", format_message(fmt, args...));
+        }
+    }
+
+    template<typename... Args> static void infof(const char* fmt, Args... args) {
+        if (static_cast<int>(sTiles::getLevel()) >= static_cast<int>(Level::Info)) {
+            log_impl("[INFO]", format_message(fmt, args...));
+        }
+    }
+
+    template<typename... Args> static void debugf(const char* fmt, Args... args) {
+        if (static_cast<int>(sTiles::getLevel()) >= static_cast<int>(Level::Debug)) {
+            log_impl("[DEBUG]", format_message(fmt, args...));
+        }
+    }
+
+
+#ifndef STILES_LOGGER_CALLSITE_CTAD
+#if !defined(__clang__) && defined(__GNUC__) && __GNUC__ >= 14
+#define STILES_LOGGER_CALLSITE_CTAD 1
+#else
+#define STILES_LOGGER_CALLSITE_CTAD 0
 #endif
+#endif
+
+#if STILES_LOGGER_CALLSITE_CTAD
+    template<typename... Args>
+    struct warning {
+        // Warnings write to stderr (like errors) and print at every level
+        // except an EXPLICIT silence request (sTiles_set_log_level(-1) ->
+        // Level::None). They were previously gated behind Level::Info, which
+        // made every deprecation / misconfiguration warning invisible in a
+        // default-level run (default = Level::Time).
+        explicit warning(Args&&... args,
+                         const SourceLocation& loc = STILES_CURRENT_SOURCE_LOCATION) {
+            if (sTiles::getLevel() == Level::None) return;
+            log_with_context_impl("[WARNING]", loc, std::forward<Args>(args)...);
+        }
+    };
+    template<typename... Args> warning(Args&&...) -> warning<Args...>;
+
+    template<typename... Args>
+    struct error {
+        explicit error(Args&&... args,
+                       const SourceLocation& loc = STILES_CURRENT_SOURCE_LOCATION) {
+            log_with_context_impl("[ERROR]", loc, std::forward<Args>(args)...);
+        }
+    };
+    template<typename... Args> error(Args&&...) -> error<Args...>;
+
+    template<typename... Args>
+    struct fatal {
+        [[noreturn]] explicit fatal(Args&&... args,
+                                    const SourceLocation& loc = STILES_CURRENT_SOURCE_LOCATION) {
+            log_with_context_impl("[FATAL]", loc, std::forward<Args>(args)...);
+            std::exit(EXIT_FAILURE);
+        }
+    };
+    template<typename... Args> fatal(Args&&...) -> fatal<Args...>;
+
+    template<typename... Args>
+    struct warningf {
+        explicit warningf(const char* fmt, Args... args,
+                          const SourceLocation& loc = STILES_CURRENT_SOURCE_LOCATION) {
+            if (sTiles::getLevel() == Level::None) return;
+            log_with_context_impl("[WARNING]", loc, format_message(fmt, args...));
+        }
+    };
+    template<typename... Args> warningf(const char*, Args...) -> warningf<Args...>;
+
+    template<typename... Args>
+    struct errorf {
+        explicit errorf(const char* fmt, Args... args,
+                        const SourceLocation& loc = STILES_CURRENT_SOURCE_LOCATION) {
+            log_with_context_impl("[ERROR]", loc, format_message(fmt, args...));
+        }
+    };
+    template<typename... Args> errorf(const char*, Args...) -> errorf<Args...>;
+
+#else  // !STILES_LOGGER_CALLSITE_CTAD — portable fallback (context = this header)
+
+    template<typename... Args> static void warning(Args&&... args) {
+        // Warnings write to stderr (like errors) and print at every level
+        // except an EXPLICIT silence request (sTiles_set_log_level(-1)).
+        if (sTiles::getLevel() == Level::None) return;
+        log_with_context_impl("[WARNING]", STILES_CURRENT_SOURCE_LOCATION, std::forward<Args>(args)...);
     }
 
     template<typename... Args> static void error(Args&&... args) {
         log_with_context_impl("[ERROR]", STILES_CURRENT_SOURCE_LOCATION, std::forward<Args>(args)...);
     }
 
-    template<typename... Args> static void fatal(Args&&... args) {
+    template<typename... Args> [[noreturn]] static void fatal(Args&&... args) {
         log_with_context_impl("[FATAL]", STILES_CURRENT_SOURCE_LOCATION, std::forward<Args>(args)...);
         std::exit(EXIT_FAILURE);
     }
+
+    template<typename... Args> static void warningf(const char* fmt, Args... args) {
+        if (sTiles::getLevel() == Level::None) return;
+        log_with_context_impl("[WARNING]", STILES_CURRENT_SOURCE_LOCATION, format_message(fmt, args...));
+    }
+
+    template<typename... Args> static void errorf(const char* fmt, Args... args) {
+        log_with_context_impl("[ERROR]", STILES_CURRENT_SOURCE_LOCATION, format_message(fmt, args...));
+    }
+
+#endif // STILES_LOGGER_CALLSITE_CTAD
+
+    // ---- scoped timing ----------------------------------------------------
+    //
+    // RAII helper for "where did the time go": emits one [TIME] line with the
+    // elapsed wall-clock seconds when the scope exits.
+    //   { sTiles::Logger::TimeScope _t("symbolic phase"); ... }
+    //   -> [TIME] symbolic phase: 0.041237 s
+    class TimeScope {
+    public:
+        explicit TimeScope(std::string label)
+            : label_(std::move(label)), t0_(std::chrono::steady_clock::now()) {}
+        TimeScope(const TimeScope&) = delete;
+        TimeScope& operator=(const TimeScope&) = delete;
+        double seconds() const {
+            return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0_).count();
+        }
+        ~TimeScope() { timingf("%s: %.6f s", label_.c_str(), seconds()); }
+    private:
+        std::string label_;
+        std::chrono::steady_clock::time_point t0_;
+    };
 
 private:
     template<typename... Args>
@@ -221,6 +390,47 @@ private:
         log_to_stream(std::cerr, label, ctx.str());
     }
 
+    // --- [TIME] row alignment -------------------------------------------
+    //
+    // Timing rows arrive from every subsystem as free-form "<desc>: <value> s"
+    // text with ragged colon positions and mixed float formats (0.001 /
+    // 0.495344 / 4.7e-07). Normalizing them HERE — instead of at each call
+    // site — turns the default-level output into an aligned table no matter
+    // which path emitted the row:
+    //   before: │   ↪ Bind active predicates: 4.76983e-07 s
+    //           │   ↪ Symbolic phase total: 0.495344 s
+    //   after:  │   ↪ Bind active predicates                  :    1.000e-07 s
+    //           │   ↪ Symbolic phase total                    :    0.495344 s
+    // Rows that don't end in a single ": <float> s" (bake-off tables,
+    // multi-measurement rows) pass through untouched.
+
+    // Display width in terminal columns (the tree-drawing chars │ ↪ are
+    // multi-byte UTF-8 but single-column; count codepoints, not bytes).
+    static std::size_t display_columns(const std::string& s) {
+        std::size_t n = 0;
+        for (unsigned char c : s)
+            if ((c & 0xC0) != 0x80) ++n;
+        return n;
+    }
+
+    static std::string align_timing_row(const std::string& line) {
+        static const std::regex kSecondsRow(
+            R"(^(.*\S)\s*:\s*([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)\s*s\s*$)");
+        std::smatch m;
+        if (!std::regex_match(line, m, kSecondsRow)) return line;
+        std::string desc = m[1].str();
+        // Multi-measurement rows ("phase1: X s, phase2: Y s") — leave alone.
+        if (desc.find(" s,") != std::string::npos) return line;
+        const double v = std::strtod(m[2].str().c_str(), nullptr);
+        static constexpr std::size_t kDescCol = 46;
+        const std::size_t w = display_columns(desc);
+        if (w < kDescCol) desc.append(kDescCol - w, ' ');
+        char num[48];
+        if (v != 0.0 && v < 1e-6) std::snprintf(num, sizeof(num), "%12.3e", v);
+        else                      std::snprintf(num, sizeof(num), "%12.6f", v);
+        return desc + " :" + num + " s";
+    }
+
     static void log_to_stream(std::ostream& os,
                               const char* label,
                               const std::string& message) {
@@ -239,6 +449,7 @@ private:
 
             auto parsed = extract_leading_tags(line, level_label);
             const std::string& line_label = parsed.label_override.empty() ? level_label : parsed.label_override;
+            if (line_label == "[TIME]") line = align_timing_row(line);
             emit_line(os, line_label, timestamp, parsed.tags, line);
             processed_line = true;
         }

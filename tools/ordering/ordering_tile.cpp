@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <numeric>
 #include "ordering_shared_csr.hpp"   // sTiles::SharedAdjCSR (added to runSCOTCH/runSuiteSparse sigs)
+#include "../common/stiles_logger.hpp"
 
 // ── Sub-ordering forward declarations ────────────────────────────────────────
 // Cases 1-2: C-ABI (extern "C") — actual symbols in ordering_rcm.cpp / ordering_nd.cpp
@@ -183,8 +184,8 @@ void stiles_runTileOrdering(
     *iperm = nullptr;
 
     if (N <= 0 || nnz < 0 || tile_size <= 0) {
-        fprintf(stderr, "stiles_runTileOrdering: invalid arguments "
-                        "(N=%d, nnz=%d, tile_size=%d)\n", N, nnz, tile_size);
+        sTiles::Logger::errorf("stiles_runTileOrdering: invalid arguments "
+                        "(N=%d, nnz=%d, tile_size=%d)", N, nnz, tile_size);
         return;
     }
 
@@ -295,8 +296,8 @@ void stiles_runTileOrdering(
             break;
 
         default:
-            fprintf(stderr, "stiles_runTileOrdering: unknown sub_ordering=%d, "
-                            "falling back to identity\n", sub_ordering);
+            sTiles::Logger::errorf("stiles_runTileOrdering: unknown sub_ordering=%d, "
+                            "falling back to identity", sub_ordering);
             tile_perm  = static_cast<int*>(malloc(tiles_dim * sizeof(int)));
             tile_iperm = static_cast<int*>(malloc(tiles_dim * sizeof(int)));
             std::iota(tile_perm,  tile_perm  + tiles_dim, 0);
@@ -308,7 +309,7 @@ void stiles_runTileOrdering(
     delete[] tj;
 
     if (!tile_perm || !tile_iperm) {
-        fprintf(stderr, "stiles_runTileOrdering: sub-ordering %d returned null perm\n",
+        sTiles::Logger::errorf("stiles_runTileOrdering: sub-ordering %d returned null perm",
                 sub_ordering);
         if (extern_owned) { free(tile_perm); free(tile_iperm); }
         else            { free(tile_perm); free(tile_iperm); }

@@ -44,7 +44,7 @@ bool build_mapper(int                       n,
                   const int*                row,
                   const int*                col,
                   const int*                element_perm,
-                  const int*                L_colptr,
+                  const int64_t*                L_colptr,
                   const int*                L_rowind,
                   long long                 nnz_L,
                   Mapper&                   out);

@@ -38,6 +38,13 @@
         sTiles_set_params;
         sTiles_get_all_params;
         sTiles_print_params;
+        sTiles_print_env;
+
+        # ---- Symbolic-only preprocessing (MPI perm shipping) ----
+        sTiles_init_symbolic;
+        sTiles_set_symbolic_only;
+        sTiles_get_symbolic_only;
+        sTiles_set_symbolic_done_callback;
 
         # ---- Ordering / partitioning configuration ----
         sTiles_set_ordering_mode;

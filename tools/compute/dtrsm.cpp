@@ -232,8 +232,7 @@ namespace sTiles {
             // were col-major. So the gate must also confirm the dispatch
             // will actually reach the semisparse path; otherwise pin to
             // col-major to keep the dense path correct.
-            static int* _ws_params = sTiles_get_params();
-            const int _ws_tile_type_mode = _ws_params ? _ws_params[3] : 0;
+            const int _ws_tile_type_mode = stiles_scheme_tile_mode(scheme);
             const bool semisparse_dispatch =
                 (_ws_tile_type_mode == 1)
                 && scheme->chunkedDenseTiles
@@ -314,8 +313,7 @@ namespace sTiles {
         if (scheme->use_gpu && scheme->dense_tiles_gpu &&
             scheme->factorization_variant == 0)
         {
-            static int* gpu_params = sTiles_get_params();
-            const int tile_type_mode = gpu_params[3];
+            const int tile_type_mode = stiles_scheme_tile_mode(scheme);
             const bool is_semisparse_gpu = (tile_type_mode == 1) &&
                                            scheme->chunkedDenseTiles &&
                                            scheme->semisparseTileMetaCore;
@@ -499,8 +497,32 @@ namespace sTiles {
 
         // Select parallelization backend: OMP if param[8]==1, otherwise pthreads (default)
         int status;
-        const bool use_omp = (stiles_control_params[8] == 1);
-        if (use_omp) {
+        const bool use_omp = (stiles_control_params[sTiles::param::UseOMP] == 1);
+
+        // Rescale + pthreads deadlock guard. The pthreads solve runs on the
+        // persistent bound team, whose worker count is fixed at bind time
+        // (stile->world_size). When a rescale schedule is active its per-rank
+        // solve offsets / update-counter sync are sized for
+        // rescale_schedule.num_cores; if the bound team has a DIFFERENT size the
+        // reduce/signal loop waits on ranks that never match -> hang. This bites
+        // the plain `turn_on_rescale` + solve_LLT/L/LT path (bound to the working
+        // call's own team, sized at the factor's native cores). Route only that
+        // mismatched case through the OMP path, which opens a fresh region sized
+        // to rescale_schedule.num_cores. The explicit sTiles_solve_LLT_rescale is
+        // UNCHANGED: it binds the rescale group's team, whose size already equals
+        // rescale_schedule.num_cores, so it stays on the fast pthreads path (this
+        // is the path R-INLA uses).
+        bool reroute_rescale = false;
+        if (!use_omp
+            && scheme->use_rescale.load(std::memory_order_acquire) > 0
+            && scheme->rescale_schedule.num_cores > 0) {
+            stiles_context_t* bstile = stiles_context_self(bind_index);
+            if (bstile && bstile->world_size != scheme->rescale_schedule.num_cores) {
+                reroute_rescale = true;
+            }
+        }
+
+        if (use_omp || reroute_rescale) {
             status = static_cast<int>(sTiles::omp_dtrsm(bind_index, scheme, rhs_ptr, nrhs, solve_type));
         } else {
             status = sTiles::solve_wrapper_internal(bind_index, scheme, rhs_ptr, nrhs, solve_type);
@@ -565,7 +587,13 @@ namespace sTiles {
             global_index_mapped = obj->schemes[0]->call_lookup_table[new_group_index][new_call_index];
         }
 
-        return sTiles::wrapper_solve(global_index, obj->schemes[global_index_mapped], B, solve_type, nrhs);
+        const double _t0 = omp_get_wtime();
+        const int _rc = sTiles::wrapper_solve(global_index, obj->schemes[global_index_mapped], B, solve_type, nrhs);
+        static const char* const _solve_names[] = { "Solve L", "Solve LT", "Solve LLT" };
+        sTiles::Logger::timingf("\u2502   \u21aa %s (group %d, call %d, nrhs %d): %.6f s",
+            (solve_type >= 0 && solve_type <= 2) ? _solve_names[solve_type] : "Solve",
+            group_index, call_index, nrhs, omp_get_wtime() - _t0);
+        return _rc;
     }
 
     int wrapper_solve_call_rescale(int group_index, int call_index, sTiles_object* obj, double *B, int solve_type, int nrhs, int group_index_rescale, int call_index_rescale) {
@@ -629,7 +657,7 @@ namespace sTiles {
         // Gated on mode==2 ONLY: the semisparse/dense solves are already fast and their
         // workers are not verified to degrade to a single thread, so leave them untouched.
         {
-            const int _mode = sTiles_get_params()[3];   // 0=dense 1=semisparse 2=sparse/nonunif
+            const int _mode = stiles_scheme_tile_mode(scheme);   // 0=dense 1=semisparse 2=sparse/nonunif
             const int _ts   = scheme->tile_size;
             const int _nrt  = (scheme->dim <= 0 || _ts <= 0) ? 0 : (scheme->dim - 1) / _ts + 1;
             constexpr int STILES_SOLVE_OMP_MIN_TILES = 64;   // tunable crossover
@@ -638,7 +666,7 @@ namespace sTiles {
 
         // Check tile type mode for semisparse handling
         static int* stiles_control_params = sTiles_get_params();
-        const int tile_type_mode = stiles_control_params[3];
+        const int tile_type_mode = stiles_scheme_tile_mode(scheme);
         const bool is_semisparse = (tile_type_mode == 1) &&
                                    scheme->chunkedDenseTiles &&
                                    scheme->semisparseTileMetaCore;
@@ -809,6 +837,17 @@ extern "C" {
         // Use safer C++ static_cast instead of C-style cast.
         sTiles_object* s = static_cast<sTiles_object*>(*obj);
 
+        // Refuse a scheme whose preprocessing failed (see sTiles_chol guard).
+        {
+            const int _gi = s->schemes[0]->call_lookup_table[group_index][call_index];
+            TiledMatrix* _sc = (_gi >= 0) ? s->schemes[_gi] : nullptr;
+            if (!_sc || _sc->preprocess_failed) {
+                sTiles::Logger::error("sTiles_solve_LLT: group ", group_index, " call ", call_index,
+                    " was not successfully preprocessed; skipping solve.");
+                return -1;
+            }
+        }
+
         // (Row-major B transpose is handled inside wrapper_solve via
         //  to_ordering_padded_row when scheme->prefer_row_layout is set.)
 
@@ -822,7 +861,7 @@ extern "C" {
                 int* params = sTiles_get_params();
                 const int n = sp_scheme->dim - sp_scheme->nd_padding;
                 sTiles::StatusCode sp_status =
-                    (params && params[8] == -1)
+                    (params && params[sTiles::param::UseOMP] == -1)
                         ? sTiles::pthreads_sparse_dtrsm(gi, sp_scheme, B, nrhs, n)
                         : sTiles::omp_sparse_dtrsm(gi, sp_scheme, B, nrhs, n);
                 return (sp_status == sTiles::StatusCode::Success) ? 0 : -1;
@@ -857,7 +896,7 @@ extern "C" {
             int* params = sTiles_get_params();
             const int n = scheme->dim - scheme->nd_padding;
             sTiles::StatusCode sp_status =
-                (params && params[8] == -1)
+                (params && params[sTiles::param::UseOMP] == -1)
                     ? sTiles::pthreads_sparse_dtrsm(global_index_mapped, scheme, B, nrhs, n)
                     : sTiles::omp_sparse_dtrsm(global_index_mapped, scheme, B, nrhs, n);
             return (sp_status == sTiles::StatusCode::Success) ? 0 : -1;
@@ -911,7 +950,7 @@ extern "C" {
                 int* params = sTiles_get_params();
                 const int n = sp_scheme->dim - sp_scheme->nd_padding;
                 sTiles::StatusCode sp_status =
-                    (params && params[8] == -1)
+                    (params && params[sTiles::param::UseOMP] == -1)
                         ? sTiles::pthreads_sparse_dtrsm_forward(gi, sp_scheme, B, nrhs, n)
                         : sTiles::omp_sparse_dtrsm_forward(gi, sp_scheme, B, nrhs, n);
                 return (sp_status == sTiles::StatusCode::Success) ? 0 : -1;
@@ -946,7 +985,7 @@ extern "C" {
             int* params = sTiles_get_params();
             const int n = scheme->dim - scheme->nd_padding;
             sTiles::StatusCode sp_status =
-                (params && params[8] == -1)
+                (params && params[sTiles::param::UseOMP] == -1)
                     ? sTiles::pthreads_sparse_dtrsm_forward(global_index_mapped, scheme, B, nrhs, n)
                     : sTiles::omp_sparse_dtrsm_forward(global_index_mapped, scheme, B, nrhs, n);
             return (sp_status == sTiles::StatusCode::Success) ? 0 : -1;
@@ -1000,7 +1039,7 @@ extern "C" {
                 int* params = sTiles_get_params();
                 const int n = sp_scheme->dim - sp_scheme->nd_padding;
                 sTiles::StatusCode sp_status =
-                    (params && params[8] == -1)
+                    (params && params[sTiles::param::UseOMP] == -1)
                         ? sTiles::pthreads_sparse_dtrsm_backward(gi, sp_scheme, B, nrhs, n)
                         : sTiles::omp_sparse_dtrsm_backward(gi, sp_scheme, B, nrhs, n);
                 return (sp_status == sTiles::StatusCode::Success) ? 0 : -1;
@@ -1035,7 +1074,7 @@ extern "C" {
             int* params = sTiles_get_params();
             const int n = scheme->dim - scheme->nd_padding;
             sTiles::StatusCode sp_status =
-                (params && params[8] == -1)
+                (params && params[sTiles::param::UseOMP] == -1)
                     ? sTiles::pthreads_sparse_dtrsm_backward(global_index_mapped, scheme, B, nrhs, n)
                     : sTiles::omp_sparse_dtrsm_backward(global_index_mapped, scheme, B, nrhs, n);
             return (sp_status == sTiles::StatusCode::Success) ? 0 : -1;

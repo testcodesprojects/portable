@@ -44,7 +44,7 @@ void compare_tiles(const char* kernel_name,
     double old_norm = std::sqrt(old_norm_sq);
     double relative_error = (old_norm > 0) ? (error_norm / old_norm) : error_norm;
     if (relative_error > tolerance) {
-        printf("[VERIFY FAILED] Rank, %s: Relative error = %e > tolerance (%e)\n", kernel_name, relative_error, tolerance);
+        sTiles::Logger::errorf("[VERIFY FAILED] %s: Relative error = %e > tolerance (%e)", kernel_name, relative_error, tolerance);
     }
 }
 

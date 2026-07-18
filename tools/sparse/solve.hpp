@@ -1,5 +1,34 @@
-#ifndef SPS_SCHED_SOLVE_HPP
-#define SPS_SCHED_SOLVE_HPP
+/**
+ * @file    solve.hpp
+ * @brief   Triangular solves for the sparse module, including the packed-CSC fast path.
+ *
+ * @project sTiles (Sparse Tiles Library)
+ * @author  Esmail Abdul Fattah, King Abdullah University of Science and Technology (KAUST)
+ * @contact esmail.abdulfattah@kaust.edu.sa
+ * @version 3.0.0
+ * @date 1 1 2026
+ * @license Proprietary
+ *
+ * @note This file is part of the sTiles library, a proprietary software package.
+ *       Redistribution or modification without prior permission is prohibited.
+ *
+ * Copyright (c) 2026, Esmail Abdul Fattah, KAUST. All rights reserved.
+ *
+ * @license
+ * This software is proprietary and confidential. Unauthorized copying, distribution, or modification
+ * of this software, via any medium, is strictly prohibited. Permission is granted to use the software
+ * in binary form for non-commercial purposes only, provided that this copyright notice and permission
+ * notice are included in all copies or substantial portions of the software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+ * NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+#ifndef _STILES_SPARSE_SOLVE_HPP_
+#define _STILES_SPARSE_SOLVE_HPP_
 
 #include "symbolic.hpp"
 #include "supernode.hpp"
@@ -13,9 +42,9 @@ namespace sTiles { namespace sparse {
 // symbolic structure (s.n_super, cells_, J/I assignments) doesn't change.
 // Numerical re-factorizations on the same pattern keep ColIndex valid.
 struct ColIndex {
-    std::vector<Int>              diag_cell;     // 1-based: diag_cell[I] = index into cs of (I,I)
-    std::vector<std::vector<Int>> off_cells;     // 1-based: off_cells[I] = indices of (I,J>I)
-    Int                           max_off_rows = 0;
+        std::vector<Int>              diag_cell;     // 1-based: diag_cell[I] = index into cs of (I,I)
+        std::vector<std::vector<Int>> off_cells;     // 1-based: off_cells[I] = indices of (I,J>I)
+        Int                           max_off_rows = 0;
 };
 
 // Build the per-supernode cell index. O(cs.cell_count()); typically called
@@ -27,8 +56,8 @@ ColIndex build_col_index(const Symbolic& s, const CellStore& cs);
 // `scatter` buffer is partitioned: thread t owns the slice starting at
 // max_off_rows * nrhs * t.
 struct SolveScratch {
-    std::vector<double> y;        // permuted RHS / running solution (n × nrhs)
-    std::vector<double> scatter;  // (max_off_rows × nrhs × num_threads)
+        std::vector<double> y;        // permuted RHS / running solution (n × nrhs)
+        std::vector<double> scatter;  // (max_off_rows × nrhs × num_threads)
 };
 
 // Elimination-tree level schedule. All supernodes in the same level have no
@@ -44,9 +73,9 @@ struct SolveScratch {
 // (root → leaves). Each supernode writes only to its own column range, so
 // supernodes within a level are embarrassingly parallel (no atomics).
 struct EtreeSchedule {
-    std::vector<Int>              level_of_super;    // size n_super+1, 1-indexed
-    std::vector<std::vector<Int>> supers_in_level;   // [lvl] → list of supernode IDs
-    Int                           num_levels = 0;
+        std::vector<Int>              level_of_super;    // size n_super+1, 1-indexed
+        std::vector<std::vector<Int>> supers_in_level;   // [lvl] → list of supernode IDs
+        Int                           num_levels = 0;
 };
 
 // Build the schedule from the supernode etree. O(n_super).
@@ -120,12 +149,12 @@ void solve         (const Symbolic& s, const CellStore& cs,
 // built once from the supernodal CellStore and reused across solves on the same
 // factor. Rebuilt when the factor changes.
 struct PackedCsc {
-    std::vector<Ptr>            colptr;   // size n+1                    — STRUCTURE (per pattern)
-    std::vector<Idx>            rowind;   // 0-based rows, diag first    — STRUCTURE (per pattern)
-    std::vector<const double*>  src;      // src[p] → supernodal nzval slot for entry p — STRUCTURE
-    std::vector<double>         values;   // refreshed each factorization via src (mirrors semi L_src)
-    bool structure_built = false;         // colptr/rowind/src — built ONCE per symbolic pattern
-    bool values_built    = false;         // values — refreshed on each new factorization
+        std::vector<Ptr>            colptr;   // size n+1                    — STRUCTURE (per pattern)
+        std::vector<Idx>            rowind;   // 0-based rows, diag first    — STRUCTURE (per pattern)
+        std::vector<const double*>  src;      // src[p] → supernodal nzval slot for entry p — STRUCTURE
+        std::vector<double>         values;   // refreshed each factorization via src (mirrors semi L_src)
+        bool structure_built = false;         // colptr/rowind/src — built ONCE per symbolic pattern
+        bool values_built    = false;         // values — refreshed on each new factorization
 };
 
 // Full build from the supernodal factor: colptr/rowind + the src pointer map +
@@ -167,4 +196,4 @@ void solve_packed_multi(const Symbolic& s, const PackedCsc& csc,
 
 }}  // namespace sTiles::sparse
 
-#endif  // SPS_SCHED_SOLVE_HPP
+#endif  // _STILES_SPARSE_SOLVE_HPP_

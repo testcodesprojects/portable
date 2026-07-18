@@ -33,6 +33,7 @@
 #endif
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <iterator>
 #include <functional>
 #include <vector>
@@ -605,7 +606,10 @@ inline void build_inv_gather_info(TiledMatrix* scheme) {
     }
 
     const auto& tasks = *scheme->inv_tasks;
-    const int n_tasks = static_cast<int>(tasks.size());
+    // 64-bit: on huge matrices the task count exceeds INT32_MAX. A truncating
+    // int cast wraps negative, and make_shared<vector<>>(negative*stride) then
+    // throws std::length_error before the INT32 packed-size guard below runs.
+    const int64_t n_tasks = static_cast<int64_t>(tasks.size());
 
     // Pre-flight: estimate the maximum size of the packed buffer.
     // data_offset is stored as int32 (see lines below), so if packed.size()
@@ -616,7 +620,7 @@ inline void build_inv_gather_info(TiledMatrix* scheme) {
     // has_gather_info==false.
     {
         int64_t estimated_packed = 0;
-        for (int t = 0; t < n_tasks; ++t) {
+        for (int64_t t = 0; t < n_tasks; ++t) {
             const auto& task = tasks[static_cast<std::size_t>(t)];
             const int myroutine = task[0];
             if (myroutine == 7) {
@@ -652,10 +656,10 @@ inline void build_inv_gather_info(TiledMatrix* scheme) {
     auto& packed = *(scheme->inv_gather_packed = std::make_shared<std::vector<int32_t>>());
     packed.reserve(static_cast<std::size_t>(n_tasks) * 4); // rough estimate
 
-    for (int t = 0; t < n_tasks; ++t) {
+    for (int64_t t = 0; t < n_tasks; ++t) {
         const auto& task = tasks[static_cast<std::size_t>(t)];
         const int myroutine = task[0];
-        const int idx_base = t * 3; // [data_offset, n_valid, flags]
+        const int64_t idx_base = t * 3; // [data_offset, n_valid, flags]
 
         if (myroutine == 7) {
             // Case 7: col_map maps fact columns (aind1) to inv2 stored columns (acol2)
@@ -809,8 +813,8 @@ inline void build_chol_scatter_info(TiledMatrix* scheme) {
     // We use scheme->num_cores as a stand-in for STILES_SIZE since the world
     // size is propagated into scheme->num_cores at preprocessing time.
     const int* params = sTiles_get_params();
-    const bool serial_path = (scheme->num_cores <= 1) && (params[14] == 0);
-    const bool target_is_sparse_aware = serial_path && (params[9] != 2);
+    const bool serial_path = (scheme->num_cores <= 1) && (params[sTiles::param::SerialMode] == 0);
+    const bool target_is_sparse_aware = serial_path && (params[sTiles::param::SemisparseImpl] != 2);
     (void)target_is_sparse_aware; // currently both enum modes share the same
                                   // 0-4 layout; the sparse fast path inside
                                   // imp3_serial_and_sparse decides at runtime.
@@ -819,7 +823,11 @@ inline void build_chol_scatter_info(TiledMatrix* scheme) {
                                   // breaking imp3_serial.
 
     const auto& tasks = *scheme->chol_tasks;
-    const int n_tasks = static_cast<int>(tasks.size());
+    // 64-bit: on huge matrices the chol task count exceeds INT32_MAX. A
+    // truncating int cast wraps negative, so make_shared<vector<int64_t>>(
+    // static_cast<size_t>(n_tasks)*2) below allocates a ~10^19-element vector
+    // and throws std::length_error (the crash on bern_spd, n=6.2M).
+    const int64_t n_tasks = static_cast<int64_t>(tasks.size());
     constexpr int FUSE_THRESHOLD = 16;
 
     // chol_scatter_index stores 64-bit data_offset so packed.size() can exceed
@@ -831,10 +839,10 @@ inline void build_chol_scatter_info(TiledMatrix* scheme) {
     auto& packed = *(scheme->chol_scatter_packed = std::make_shared<std::vector<int32_t>>());
     packed.reserve(static_cast<std::size_t>(n_tasks) * 2);
 
-    for (int t = 0; t < n_tasks; ++t) {
+    for (int64_t t = 0; t < n_tasks; ++t) {
         const auto& task = tasks[static_cast<std::size_t>(t)];
         const int myroutine = task[0];
-        const int idx_base = t * 2;
+        const int64_t idx_base = t * 2;
 
         if (myroutine != 4) {
             index[static_cast<std::size_t>(idx_base) + 1] = 0xFF; // not case 4
@@ -908,6 +916,14 @@ sTiles::StatusCode collect_tasks(sTiles_call **call_info, TiledMatrix **scheme, 
     const int num_tiles = scheme_ptr->dimTiledMatrix;
     const TileIndexer::Method method = scheme_ptr->neighbor_lookup_method;
     TileIndexer::State& state = scheme_ptr->state;
+
+    // Preprocessing-time-measurement gate. When STILES_SKIP_SOLVE_INV_PREP is set,
+    // skip the selected-inverse AND triangular-solve task collection so init_group
+    // reflects the chol-only preprocessing cost. Intended for symbolic/preprocess
+    // benchmarking (e.g. bench_ordering, which stops after init and never solves).
+    // Do NOT set it for a workload that then solves or computes the inverse — the
+    // tile solve/selinv paths need these task lists.
+    const bool skip_solve_inv_prep = (std::getenv("STILES_SKIP_SOLVE_INV_PREP") != nullptr);
 
     // Cap num_cores to problem size — no point forking more threads than tile rows
     const int available = std::min(num_cores, omp_get_max_threads());
@@ -1051,13 +1067,13 @@ sTiles::StatusCode collect_tasks(sTiles_call **call_info, TiledMatrix **scheme, 
                     chol_tasks.reserve(chol_total);
                     chol_offsets.assign(static_cast<std::size_t>(a) + 1, 0);
                     for (int core = 0; core < a; ++core) {
-                        chol_offsets[static_cast<std::size_t>(core)] = static_cast<int>(chol_tasks.size());
+                        chol_offsets[static_cast<std::size_t>(core)] = static_cast<long long>(chol_tasks.size());
                         auto& bin = chol_bins[static_cast<std::size_t>(core)];
                         if (!bin.empty()) {
                             chol_tasks.insert(chol_tasks.end(), std::make_move_iterator(bin.begin()), std::make_move_iterator(bin.end()));
                         }
                     }
-                    chol_offsets[static_cast<std::size_t>(a)] = static_cast<int>(chol_tasks.size());
+                    chol_offsets[static_cast<std::size_t>(a)] = static_cast<long long>(chol_tasks.size());
 
                     const double _ct_t4 = omp_get_wtime();
                     {
@@ -1066,7 +1082,7 @@ sTiles::StatusCode collect_tasks(sTiles_call **call_info, TiledMatrix **scheme, 
                     }
 
                     // ── INV: collect with P threads, remap P→a, stable sort, dedup barriers ──
-                    if (scheme_ptr->compute_inverse) {
+                    if (scheme_ptr->compute_inverse && !skip_solve_inv_prep) {
                         const double _inv_t0 = omp_get_wtime();
                         std::vector<std::vector<std::array<int,7>>> tmp_inv_bins(static_cast<std::size_t>(P));
                         ProcessCore inv_collector{state, method, P, a, num_tiles, group_index, call_info, scheme_ptr, map_id, has_red_tree};
@@ -1169,13 +1185,13 @@ sTiles::StatusCode collect_tasks(sTiles_call **call_info, TiledMatrix **scheme, 
                         inv_offsets.assign(static_cast<std::size_t>(a) + 1, 0);
 
                         for (int core = 0; core < a; ++core) {
-                            inv_offsets[static_cast<std::size_t>(core)] = static_cast<int>(inv_tasks.size());
+                            inv_offsets[static_cast<std::size_t>(core)] = static_cast<long long>(inv_tasks.size());
                             auto& bin = inv_bins[static_cast<std::size_t>(core)];
                             if (!bin.empty()) {
                                 inv_tasks.insert(inv_tasks.end(), std::make_move_iterator(bin.begin()), std::make_move_iterator(bin.end()));
                             }
                         }
-                        inv_offsets[static_cast<std::size_t>(a)] = static_cast<int>(inv_tasks.size());
+                        inv_offsets[static_cast<std::size_t>(a)] = static_cast<long long>(inv_tasks.size());
 
                         const double _inv_t4 = omp_get_wtime();
                         std::size_t n_inv = scheme_ptr->inv_tasks ? scheme_ptr->inv_tasks->size() : 0;
@@ -1192,6 +1208,8 @@ sTiles::StatusCode collect_tasks(sTiles_call **call_info, TiledMatrix **scheme, 
                 // ========== SOLVE TASK COLLECTION ==========
                 // Pre-collect (k, m) tile pairs for triangular solve
                 // This eliminates isActive() and map_ij() calls at solve time
+                // (skipped under STILES_SKIP_SOLVE_INV_PREP — preprocess timing only)
+                if (!skip_solve_inv_prep)
                 {
                     const int tile_size = scheme_ptr->tile_size;
                     const int N = scheme_ptr->dim;
@@ -1282,8 +1300,7 @@ sTiles::StatusCode collect_tasks(sTiles_call **call_info, TiledMatrix **scheme, 
                     // the row-affinity rebin. Dense (mode 0) keeps the natural
                     // striped order from solve_collect_forward.
                     {
-                        const int* _params = sTiles_get_params();
-                        const int  _tile_type_mode = _params ? _params[3] : 0;
+                        const int  _tile_type_mode = stiles_scheme_tile_mode(scheme_ptr);
                         if (_tile_type_mode == 1) {
                             auto rebin_by_row_and_sort = [&](
                                 std::vector<std::array<int,6>>& tasks_inout,
@@ -1570,8 +1587,7 @@ sTiles::StatusCode collect_tasks(sTiles_call **call_info, TiledMatrix **scheme, 
                 // B[m] once r >= 3 -> wrong x (dense walks positionally and
                 // must keep the striped order, so it is left untouched).
                 {
-                    const int* _params = sTiles_get_params();
-                    const int  _tile_type_mode = _params ? _params[3] : 0;
+                    const int  _tile_type_mode = stiles_scheme_tile_mode(scheme_ptr);
                     if (_tile_type_mode == 1) {
                         auto rebin_by_row_and_sort = [&](
                             std::vector<std::array<int,6>>& tasks_inout,

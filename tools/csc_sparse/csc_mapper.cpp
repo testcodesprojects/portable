@@ -10,7 +10,7 @@ bool build_mapper(int           n,
                   const int*    row,
                   const int*    col,
                   const int*    element_perm,
-                  const int*    L_colptr,
+                  const int64_t*    L_colptr,
                   const int*    L_rowind,
                   long long     nnz_L,
                   Mapper&       out)
@@ -29,8 +29,8 @@ bool build_mapper(int           n,
         }
         // Binary search r in L_rowind[L_colptr[c] .. L_colptr[c+1]).
         // L_rowind is sorted within each column (symbolic_phase sorts it).
-        const int beg = L_colptr[c];
-        const int end = L_colptr[c + 1];
+        const int64_t beg = L_colptr[c];
+        const int64_t end = L_colptr[c + 1];
         const int* lo = L_rowind + beg;
         const int* hi = L_rowind + end;
         const int* it = std::lower_bound(lo, hi, r);

@@ -139,7 +139,7 @@ namespace sTiles{
                         double *tile_out = tiledMatrix->denseTiles[index1];
                         sTiles::StatusCode status = sTiles::core_dpotrf(sTiles::Uplo::Upper, tempkn, tile_out, ldak);
                         if (status != sTiles::StatusCode::Success) {
-                            std::fprintf(stderr, "sTiles error: matrix is not positive definite (tile k=%d).\n", k);
+                            sTiles::Logger::errorf("matrix is not positive definite (tile k=%d).", k);
                             stile->ss_abort = 1;
                             return;
                         }
@@ -206,7 +206,7 @@ namespace sTiles{
                         double *tile_out = tiledMatrix->denseTiles[index1];
                         sTiles::StatusCode status = sTiles::core_dpotrf(sTiles::Uplo::Upper, tempkn, tile_out, ldak);
                         if (status != sTiles::StatusCode::Success) {
-                            std::fprintf(stderr, "sTiles error: matrix is not positive definite (tile k=%d).\n", k);
+                            sTiles::Logger::errorf("matrix is not positive definite (tile k=%d).", k);
                             dep_tracker->abort_flag.store(true, std::memory_order_release);
                             return;
                         }
@@ -249,11 +249,11 @@ namespace sTiles{
 
             const auto &tasks = sTiles::get_chol_tasks(tiledMatrix);
             const auto &offsets = sTiles::get_chol_task_offsets(tiledMatrix);
-            const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
-            const int end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<int>(tasks.size());
+            const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
+            const long long end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<long long>(tasks.size());
 
             ss_init_dp(tiledMatrix, num_tiles_per_dim, tiledMatrix->numActiveTiles, 0);
-            for (int idx = start; idx < end; ++idx) {
+            for (long long idx = start; idx < end; ++idx) {
 
                 const std::array<int,7> &t = tasks[idx];
                 const int myroutine = t[0];
@@ -276,7 +276,7 @@ namespace sTiles{
                         double *tile_out = tiledMatrix->denseTiles[index1];
                         sTiles::StatusCode status = sTiles::core_dpotrf(sTiles::Uplo::Upper, tempkn, tile_out, ldak);
                         if (status != sTiles::StatusCode::Success) {
-                            std::fprintf(stderr, "sTiles error: matrix is not positive definite (tile k=%d).\n", k);
+                            sTiles::Logger::errorf("matrix is not positive definite (tile k=%d).", k);
                             ss_abort(); break;
                         }
                         // (k,k) → index1
@@ -335,12 +335,12 @@ namespace sTiles{
 
             const auto &tasks = sTiles::get_chol_tasks(tiledMatrix);
             const auto &offsets = sTiles::get_chol_task_offsets(tiledMatrix);
-            const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
-            const int end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<int>(tasks.size());
+            const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
+            const long long end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<long long>(tasks.size());
 
             dep_init_dp(tiledMatrix, num_tiles_per_dim, tiledMatrix->numActiveTiles, 0);
 
-            for (int idx = start; idx < end; ++idx) {
+            for (long long idx = start; idx < end; ++idx) {
 
                 const std::array<int,7> &t = tasks[idx];
                 const int myroutine = t[0];
@@ -364,7 +364,7 @@ namespace sTiles{
                         double *tile_out = tiledMatrix->denseTiles[index1];
                         sTiles::StatusCode status = sTiles::core_dpotrf(sTiles::Uplo::Upper, tempkn, tile_out, ldak);
                         if (status != sTiles::StatusCode::Success) {
-                            std::fprintf(stderr, "sTiles error: matrix is not positive definite (tile k=%d).\n", k);
+                            sTiles::Logger::errorf("matrix is not positive definite (tile k=%d).", k);
                             dep_abort_all(); break;
                         }
                         // (k,k) → index1
@@ -429,8 +429,8 @@ namespace sTiles{
             const sTiles::TileMetaCore* __restrict__ const tile_meta = tiledMatrix->tileMetaCore;
 
             const auto &tasks = sTiles::get_chol_tasks(tiledMatrix);
-            const int start = 0;
-            const int end = static_cast<int>(tasks.size());
+            const long long start = 0;
+            const long long end = static_cast<long long>(tasks.size());
 
             if (rank >= tiledMatrix->num_workspaces) {
                 sTiles::Logger::error("[semisparse_imp3_serial] rank ", rank, " >= num_workspaces ", tiledMatrix->num_workspaces);
@@ -452,7 +452,7 @@ namespace sTiles{
             const int64_t* scatter_index = tiledMatrix->chol_scatter_index->data();
             const int32_t* scatter_packed = tiledMatrix->chol_scatter_packed->data();
 
-            for (int idx = start; idx < end; ++idx) {
+            for (long long idx = start; idx < end; ++idx) {
                 const std::array<int,7> &t = tasks[idx];
                 const int myroutine = t[0];
                 const int index1 = t[4];
@@ -512,7 +512,7 @@ namespace sTiles{
                         // ── Dense path: precomputed path_flag dispatch ──
                         // Precondition: param[7]==1 (default in fast mode), which guarantees
                         // build_chol_scatter_info has populated scatter_index/scatter_packed.
-                        const int si_base = idx * 2;
+                        const int64_t si_base = idx * 2;
                         const int64_t data_off  = scatter_index[si_base];
                         const int path_flag = static_cast<int>(scatter_index[si_base + 1]);
 
@@ -644,7 +644,7 @@ namespace sTiles{
                         const sTiles::TileMetaCore& meta = tile_meta[index1];
                         sTiles::StatusCode ssstatus = sTiles::core_dpotrf_upper_banded(meta.height, semi.upper_bw, tile_out);
                         if (ssstatus != sTiles::StatusCode::Success) {
-                            std::fprintf(stderr, "sTiles error: matrix is not positive definite (banded tile k=%d).\n", t[2]);
+                            sTiles::Logger::errorf("matrix is not positive definite (banded tile k=%d).", t[2]);
                             return;
                         }
                         break;
@@ -748,7 +748,7 @@ namespace sTiles{
                                                             diag_dim, kd, active_cols,
                                                             ss_diag, kd + 1, ss_rhs, rows_rhs);
                             if (info != 0) {
-                                std::fprintf(stderr, "sTiles error: LAPACKE_dtbtrs failed with info=%d (tile m=%d, k=%d)\n",
+                                sTiles::Logger::errorf("LAPACKE_dtbtrs failed with info=%d (tile m=%d, k=%d)",
                                             info, t[1], t[2]);
                                 return;
                             }
@@ -775,8 +775,8 @@ namespace sTiles{
             const sTiles::TileMetaCore* __restrict__ const tile_meta = tiledMatrix->tileMetaCore;
 
             const auto &tasks = sTiles::get_chol_tasks(tiledMatrix);
-            const int start = 0;
-            const int end = static_cast<int>(tasks.size());
+            const long long start = 0;
+            const long long end = static_cast<long long>(tasks.size());
 
             if (rank >= tiledMatrix->num_workspaces) {
                 sTiles::Logger::error("[semi_serial_imp4_omp] rank ", rank, " >= num_workspaces ", tiledMatrix->num_workspaces);
@@ -793,7 +793,7 @@ namespace sTiles{
             const int64_t* scatter_index = tiledMatrix->chol_scatter_index->data();
             const int32_t* scatter_packed = tiledMatrix->chol_scatter_packed->data();
 
-            for (int idx = start; idx < end; ++idx) {
+            for (long long idx = start; idx < end; ++idx) {
                 const std::array<int,7> &t = tasks[idx];
                 const int myroutine = t[0];
                 const int index1 = t[4];
@@ -846,7 +846,7 @@ namespace sTiles{
                         const int rows_a = tile_meta[index1].height;
                         const int rows_out = tile_meta[index3].height;
 
-                        const int si_base = idx * 2;
+                        const int64_t si_base = idx * 2;
                         const int64_t data_off  = scatter_index[si_base];
                         const int path_flag = static_cast<int>(scatter_index[si_base + 1]);
 
@@ -971,7 +971,7 @@ namespace sTiles{
                         const sTiles::TileMetaCore& meta = tile_meta[index1];
                         sTiles::StatusCode ssstatus = sTiles::core_dpotrf_upper_banded(meta.height, semi.upper_bw, tile_out);
                         if (ssstatus != sTiles::StatusCode::Success) {
-                            std::fprintf(stderr, "sTiles error: matrix is not positive definite (banded tile k=%d).\n", t[2]);
+                            sTiles::Logger::errorf("matrix is not positive definite (banded tile k=%d).", t[2]);
                             dep_tracker->abort_flag.store(true, std::memory_order_release);
                             return;
                         }
@@ -1071,7 +1071,7 @@ namespace sTiles{
                                                             diag_dim, kd, active_cols,
                                                             ss_diag, kd + 1, ss_rhs, rows_rhs);
                             if (info != 0) {
-                                std::fprintf(stderr, "sTiles error: LAPACKE_dtbtrs failed with info=%d (tile m=%d, k=%d)\n",
+                                sTiles::Logger::errorf("LAPACKE_dtbtrs failed with info=%d (tile m=%d, k=%d)",
                                             info, t[1], t[2]);
                                 dep_tracker->abort_flag.store(true, std::memory_order_release);
                                 return;
@@ -1107,8 +1107,8 @@ namespace sTiles{
 
             const auto &tasks = sTiles::get_chol_tasks(tiledMatrix);
             const auto &offsets = sTiles::get_chol_task_offsets(tiledMatrix);
-            const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
-            const int end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<int>(tasks.size());
+            const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
+            const long long end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<long long>(tasks.size());
 
             if (rank >= tiledMatrix->num_workspaces) {
                 sTiles::Logger::error("[semisparse_imp4] rank ", rank, " >= num_workspaces ", tiledMatrix->num_workspaces);
@@ -1162,7 +1162,7 @@ namespace sTiles{
             int _dump_pt_routine_count[5] = {0,0,0,0,0};
             const double _dump_pt_t0 = _stiles_dump_pt ? omp_get_wtime() : 0.0;
 
-            for (int idx = start; idx < end; ++idx) {
+            for (long long idx = start; idx < end; ++idx) {
                 const std::array<int,7> &t = tasks[idx];
                 const int myroutine = t[0];
                 const int m = t[1];
@@ -1236,7 +1236,7 @@ namespace sTiles{
                         const int cols_b = semi_b.sa;
                         const int rows_a = tile_meta[index1].height;
 
-                        const int si_base = idx * 2;
+                        const int64_t si_base = idx * 2;
                         const int64_t data_off  = scatter_index[si_base];
                         const int path_flag = static_cast<int>(scatter_index[si_base + 1]);
 
@@ -1363,7 +1363,7 @@ namespace sTiles{
                         const sTiles::TileMetaCore& meta = tile_meta[index1];
                         sTiles::StatusCode ssstatus = sTiles::core_dpotrf_upper_banded(meta.height, semi.upper_bw, tile_out);
                         if (ssstatus != sTiles::StatusCode::Success) {
-                            std::fprintf(stderr, "sTiles error: matrix is not positive definite (banded tile k=%d).\n", k);
+                            sTiles::Logger::errorf("matrix is not positive definite (banded tile k=%d).", k);
                             ss_abort(); break;
                         }
                         // (k,k) is the diagonal tile → index1 in this case.
@@ -1461,7 +1461,7 @@ namespace sTiles{
                                             if (band < diag_cols) {
                                                 tile_out[base_row - band + col_base] += tmp_col[i];
                                             } else if (std::fabs(tmp_col[i]) > 1e-15) {
-                                                std::fprintf(stderr, "sTiles warning: DSYRK bandwidth overflow in tile k=%d: band=%d >= diag_cols=%d, dropped=%.6e\n",
+                                                sTiles::Logger::warningf("DSYRK bandwidth overflow in tile k=%d: band=%d >= diag_cols=%d, dropped=%.6e",
                                                             k, band, diag_cols, tmp_col[i]);
                                             }
                                         }
@@ -1490,7 +1490,7 @@ namespace sTiles{
                                                             diag_dim, kd, active_cols,
                                                             ss_diag, kd + 1, ss_rhs, rows_rhs);
                             if (info != 0) {
-                                std::fprintf(stderr, "sTiles error: LAPACKE_dtbtrs failed with info=%d (tile m=%d, k=%d)\n",
+                                sTiles::Logger::errorf("LAPACKE_dtbtrs failed with info=%d (tile m=%d, k=%d)",
                                             info, m, k);
                                 ss_abort(); break;
                             }
@@ -1533,8 +1533,8 @@ namespace sTiles{
 
             const auto &tasks = sTiles::get_chol_tasks(tiledMatrix);
             const auto &offsets = sTiles::get_chol_task_offsets(tiledMatrix);
-            const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
-            const int end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<int>(tasks.size());
+            const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : 0;
+            const long long end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<long long>(tasks.size());
 
             if (rank >= tiledMatrix->num_workspaces) {
                 sTiles::Logger::error("[semi_parallel_imp4_omp] rank ", rank, " >= num_workspaces ", tiledMatrix->num_workspaces);
@@ -1567,7 +1567,7 @@ namespace sTiles{
             int _dump_routine_count[5] = {0,0,0,0,0};
             const double _dump_t0 = _stiles_dump ? omp_get_wtime() : 0.0;
 
-            for (int idx = start; idx < end; ++idx) {
+            for (long long idx = start; idx < end; ++idx) {
                 const std::array<int,7> &t = tasks[idx];
                 const int myroutine = t[0];
                 const int m = t[1];
@@ -1629,7 +1629,7 @@ namespace sTiles{
                         const int cols_b = semi_b.sa;
                         const int rows_a = tile_meta[index1].height;
 
-                        const int si_base = idx * 2;
+                        const int64_t si_base = idx * 2;
                         const int64_t data_off  = scatter_index[si_base];
                         const int path_flag = static_cast<int>(scatter_index[si_base + 1]);
 
@@ -1754,7 +1754,7 @@ namespace sTiles{
                         const sTiles::TileMetaCore& meta = tile_meta[index1];
                         sTiles::StatusCode ssstatus = sTiles::core_dpotrf_upper_banded(meta.height, semi.upper_bw, tile_out);
                         if (ssstatus != sTiles::StatusCode::Success) {
-                            std::fprintf(stderr, "sTiles error: matrix is not positive definite (banded tile k=%d).\n", k);
+                            sTiles::Logger::errorf("matrix is not positive definite (banded tile k=%d).", k);
                             dep_abort_all(); break;
                         }
                         // (k,k) → index1 in this case.
@@ -1850,7 +1850,7 @@ namespace sTiles{
                                             if (band < diag_cols) {
                                                 tile_out[base_row - band + col_base] += tmp_col[i];
                                             } else if (std::fabs(tmp_col[i]) > 1e-15) {
-                                                std::fprintf(stderr, "sTiles warning: DSYRK bandwidth overflow in tile k=%d: band=%d >= diag_cols=%d, dropped=%.6e\n",
+                                                sTiles::Logger::warningf("DSYRK bandwidth overflow in tile k=%d: band=%d >= diag_cols=%d, dropped=%.6e",
                                                             k, band, diag_cols, tmp_col[i]);
                                             }
                                         }
@@ -1879,7 +1879,7 @@ namespace sTiles{
                                                             diag_dim, kd, active_cols,
                                                             ss_diag, kd + 1, ss_rhs, rows_rhs);
                             if (info != 0) {
-                                std::fprintf(stderr, "sTiles error: LAPACKE_dtbtrs failed with info=%d (tile m=%d, k=%d)\n",
+                                sTiles::Logger::errorf("LAPACKE_dtbtrs failed with info=%d (tile m=%d, k=%d)",
                                             info, m, k);
                                 dep_abort_all(); break;
                             }
@@ -1949,12 +1949,12 @@ namespace sTiles{
 
             const auto &tasks = sTiles::get_chol_tasks(tiledMatrix);
             const auto &offsets = sTiles::get_chol_task_offsets(tiledMatrix);
-            const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : static_cast<int>(tasks.size());  // surplus thread (tree_cores<a_exec): empty range, was ": 0" = run-all = deadlock
-            const int end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<int>(tasks.size());
+            const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : static_cast<long long>(tasks.size());  // surplus thread (tree_cores<a_exec): empty range, was ": 0" = run-all = deadlock
+            const long long end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<long long>(tasks.size());
 
             ss_init_dp(tiledMatrix, num_tiles_per_dim, tiledMatrix->numActiveTiles, 0);
 
-            for (int idx = start; idx < end; ++idx) {
+            for (long long idx = start; idx < end; ++idx) {
 
                 const std::array<int,7> &t = tasks[idx];
                 const int myroutine = t[0];
@@ -1978,7 +1978,7 @@ namespace sTiles{
                         double *tile_out = tiledMatrix->denseTiles[index1];
                         sTiles::StatusCode status = sTiles::core_dpotrf(sTiles::Uplo::Upper, tempkn, tile_out, ldak);
                         if (status != sTiles::StatusCode::Success) {
-                            std::fprintf(stderr, "sTiles error: matrix is not positive definite (tile k=%d).\n", k);
+                            sTiles::Logger::errorf("matrix is not positive definite (tile k=%d).", k);
                             ss_abort(); break;
                         }
                         // (k,k) → index1
@@ -2109,12 +2109,12 @@ namespace sTiles{
 
             const auto &tasks = sTiles::get_chol_tasks(tiledMatrix);
             const auto &offsets = sTiles::get_chol_task_offsets(tiledMatrix);
-            const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : static_cast<int>(tasks.size());  // surplus thread (tree_cores<a_exec): empty range, was ": 0" = run-all = deadlock
-            const int end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<int>(tasks.size());
+            const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : static_cast<long long>(tasks.size());  // surplus thread (tree_cores<a_exec): empty range, was ": 0" = run-all = deadlock
+            const long long end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<long long>(tasks.size());
 
             dep_init_dp(tiledMatrix, num_tiles_per_dim, tiledMatrix->numActiveTiles, 0);
 
-            for (int idx = start; idx < end; ++idx) {
+            for (long long idx = start; idx < end; ++idx) {
 
                 const std::array<int,7> &t = tasks[idx];
                 const int myroutine = t[0];
@@ -2138,7 +2138,7 @@ namespace sTiles{
                         double *tile_out = tiledMatrix->denseTiles[index1];
                         sTiles::StatusCode status = sTiles::core_dpotrf(sTiles::Uplo::Upper, tempkn, tile_out, ldak);
                         if (status != sTiles::StatusCode::Success) {
-                            std::fprintf(stderr, "sTiles error: matrix is not positive definite (tile k=%d).\n", k);
+                            sTiles::Logger::errorf("matrix is not positive definite (tile k=%d).", k);
                             dep_abort_all(); break;
                         }
                         // (k,k) → index1
@@ -2295,8 +2295,8 @@ namespace sTiles{
 
             const auto &tasks = sTiles::get_chol_tasks(tiledMatrix);
             const auto &offsets = sTiles::get_chol_task_offsets(tiledMatrix);
-            const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : static_cast<int>(tasks.size());  // surplus thread (tree_cores<a_exec): empty range, was ": 0" = run-all = deadlock
-            const int end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<int>(tasks.size());
+            const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : static_cast<long long>(tasks.size());  // surplus thread (tree_cores<a_exec): empty range, was ": 0" = run-all = deadlock
+            const long long end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<long long>(tasks.size());
 
             if (rank >= tiledMatrix->num_workspaces) {
                 sTiles::Logger::error("[reduction_semi] rank ", rank, " >= num_workspaces ", tiledMatrix->num_workspaces);
@@ -2323,7 +2323,7 @@ namespace sTiles{
             int _dump_ptr_routine_count[12] = {0};
             const double _dump_ptr_t0 = _stiles_dump_ptr ? omp_get_wtime() : 0.0;
 
-            for (int idx = start; idx < end; ++idx) {
+            for (long long idx = start; idx < end; ++idx) {
 
                 const std::array<int,7> &t = tasks[idx];
                 const int myroutine = t[0];
@@ -2347,7 +2347,7 @@ namespace sTiles{
                         const sTiles::TileMetaCore& meta = tile_meta[index1];
                         sTiles::StatusCode ssstatus = sTiles::core_dpotrf_upper_banded(meta.height, semi.upper_bw, tile_out);
                         if (ssstatus != sTiles::StatusCode::Success) {
-                            std::fprintf(stderr, "sTiles error: matrix is not positive definite (banded tile k=%d).\n", k);
+                            sTiles::Logger::errorf("matrix is not positive definite (banded tile k=%d).", k);
                             ss_abort(); break;
                         }
                         // (k,k) → index1
@@ -2417,7 +2417,7 @@ namespace sTiles{
                                                              diag_dim, kd, active_cols,
                                                              ss_diag, kd + 1, ss_rhs, rows_rhs);
                             if (info != 0) {
-                                std::fprintf(stderr, "sTiles error: LAPACKE_dtbtrs failed info=%d (tile m=%d, k=%d).\n",
+                                sTiles::Logger::errorf("LAPACKE_dtbtrs failed info=%d (tile m=%d, k=%d).",
                                              info, m, k);
                                 ss_abort(); break;
                             }
@@ -2444,7 +2444,7 @@ namespace sTiles{
                         const int rows_a = tile_meta[index1].height;
                         const int rows_out = tile_meta[index3].height;
 
-                        const int si_base = idx * 2;
+                        const int64_t si_base = idx * 2;
                         const int64_t data_off = scatter_index[si_base];
                         const int path_flag = static_cast<int>(scatter_index[si_base + 1]);
 
@@ -2719,8 +2719,8 @@ namespace sTiles{
 
             const auto &tasks = sTiles::get_chol_tasks(tiledMatrix);
             const auto &offsets = sTiles::get_chol_task_offsets(tiledMatrix);
-            const int start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : static_cast<int>(tasks.size());  // surplus thread (tree_cores<a_exec): empty range, was ": 0" = run-all = deadlock
-            const int end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<int>(tasks.size());
+            const long long start = (rank < static_cast<int>(offsets.size())) ? offsets[rank] : static_cast<long long>(tasks.size());  // surplus thread (tree_cores<a_exec): empty range, was ": 0" = run-all = deadlock
+            const long long end = (rank + 1 < static_cast<int>(offsets.size())) ? offsets[rank + 1] : static_cast<long long>(tasks.size());
 
             if (rank >= tiledMatrix->num_workspaces) {
                 sTiles::Logger::error("[reduction_semi_omp] rank ", rank, " >= num_workspaces ", tiledMatrix->num_workspaces);
@@ -2748,7 +2748,7 @@ namespace sTiles{
             int _dump_routine_count[5] = {0,0,0,0,0};
             const double _dump_t0 = _stiles_dump ? omp_get_wtime() : 0.0;
 
-            for (int idx = start; idx < end; ++idx) {
+            for (long long idx = start; idx < end; ++idx) {
 
                 const std::array<int,7> &t = tasks[idx];
                 const int myroutine = t[0];
@@ -2771,7 +2771,7 @@ namespace sTiles{
                         const sTiles::TileMetaCore& meta = tile_meta[index1];
                         sTiles::StatusCode ssstatus = sTiles::core_dpotrf_upper_banded(meta.height, semi.upper_bw, tile_out);
                         if (ssstatus != sTiles::StatusCode::Success) {
-                            std::fprintf(stderr, "sTiles error: matrix is not positive definite (banded tile k=%d).\n", k);
+                            sTiles::Logger::errorf("matrix is not positive definite (banded tile k=%d).", k);
                             dep_abort_all(); break;
                         }
                         // (k,k) → index1
@@ -2841,7 +2841,7 @@ namespace sTiles{
                                                              diag_dim, kd, active_cols,
                                                              ss_diag, kd + 1, ss_rhs, rows_rhs);
                             if (info != 0) {
-                                std::fprintf(stderr, "sTiles error: LAPACKE_dtbtrs failed info=%d (tile m=%d, k=%d).\n",
+                                sTiles::Logger::errorf("LAPACKE_dtbtrs failed info=%d (tile m=%d, k=%d).",
                                              info, m, k);
                                 dep_abort_all(); break;
                             }
@@ -2868,7 +2868,7 @@ namespace sTiles{
                         const int rows_a = tile_meta[index1].height;
                         const int rows_out = tile_meta[index3].height;
 
-                        const int si_base = idx * 2;
+                        const int64_t si_base = idx * 2;
                         const int64_t data_off = scatter_index[si_base];
                         const int path_flag = static_cast<int>(scatter_index[si_base + 1]);
 
@@ -3143,7 +3143,7 @@ namespace sTiles{
                     double* tile = tiledMatrix->denseTiles[0];
                     sTiles::StatusCode status = sTiles::core_dpotrf(sTiles::Uplo::Upper, N, tile, N);
                     if (status != sTiles::StatusCode::Success) {
-                        std::fprintf(stderr, "sTiles error: matrix is not positive definite.\n");
+                        sTiles::Logger::errorf("matrix is not positive definite.");
                         ss_abort();
                     }
                 }
@@ -3203,7 +3203,7 @@ namespace sTiles{
                         if (tile_out) {
                             sTiles::StatusCode status = sTiles::core_dpotrf(sTiles::Uplo::Upper, tempkn, tile_out, ldak);
                             if (status != sTiles::StatusCode::Success) {
-                                std::fprintf(stderr, "sTiles error: matrix is not positive definite (tile k=%d).\n", k);
+                                sTiles::Logger::errorf("matrix is not positive definite (tile k=%d).", k);
                                 ss_abort();
                             }
                         }
@@ -3285,7 +3285,7 @@ namespace sTiles{
                     double* tile = tiledMatrix->denseTiles[0];
                     sTiles::StatusCode status = sTiles::core_dpotrf(sTiles::Uplo::Upper, N, tile, N);
                     if (status != sTiles::StatusCode::Success) {
-                        std::fprintf(stderr, "sTiles error: matrix is not positive definite.\n");
+                        sTiles::Logger::errorf("matrix is not positive definite.");
                         dep_tracker->abort_flag.store(true, std::memory_order_release);
                     }
                 }
@@ -3339,7 +3339,7 @@ namespace sTiles{
                         if (tile_out) {
                             sTiles::StatusCode status = sTiles::core_dpotrf(sTiles::Uplo::Upper, tempkn, tile_out, ldak);
                             if (status != sTiles::StatusCode::Success) {
-                                std::fprintf(stderr, "sTiles error: matrix is not positive definite (tile k=%d).\n", k);
+                                sTiles::Logger::errorf("matrix is not positive definite (tile k=%d).", k);
                                 dep_abort_all();
                             }
                         }
@@ -3413,7 +3413,7 @@ namespace sTiles{
             sTiles::unpack_args(stile, tiledMatrix);
 
             if (!tiledMatrix) {
-                std::cout << "Error: null tiledMatrix in stiles_pdpotrf" << std::endl;
+                sTiles::Logger::error("null tiledMatrix in stiles_pdpotrf");
                 return;
             }
 
@@ -3427,8 +3427,8 @@ namespace sTiles{
                 // params[3]  = tile_type_mode (0 dense, 1 semisparse, 2 nonunif)
                 // params[14] = parallel knob (0 → Serial path when STILES_SIZE==1;
                 //              any other value → multi-core path).
-                const int  tile_type_mode = stiles_control_params[3];
-                const bool serial_path    = (STILES_SIZE == 1 && stiles_control_params[14] == 0);
+                const int  tile_type_mode = stiles_scheme_tile_mode(tiledMatrix);
+                const bool serial_path    = (STILES_SIZE == 1 && stiles_control_params[sTiles::param::SerialMode] == 0);
                 const bool has_semisparse = tiledMatrix->chunkedDenseTiles && tiledMatrix->semisparseTileMetaCore;
                 const bool tree_active    = (tiledMatrix->red_tree_separator_level > 0);
 
@@ -3514,7 +3514,7 @@ namespace sTiles{
 
             if (!tiledMatrix) {
                 #pragma omp single
-                std::cerr << "Error: null tiledMatrix in omp_pdpotrf" << std::endl;
+                sTiles::Logger::error("null tiledMatrix in omp_pdpotrf");
                 return;
             }
 
@@ -3526,8 +3526,8 @@ namespace sTiles{
 
                 // params[3]  = tile_type_mode (0 dense, 1 semisparse, 2 nonunif)
                 // params[14] = parallel knob (0 → Serial path when worldsize==1)
-                const int  tile_type_mode = stiles_control_params[3];
-                const bool serial_path    = (worldsize == 1 && stiles_control_params[14] == 0);
+                const int  tile_type_mode = stiles_scheme_tile_mode(tiledMatrix);
+                const bool serial_path    = (worldsize == 1 && stiles_control_params[sTiles::param::SerialMode] == 0);
                 const bool has_semisparse = tiledMatrix->chunkedDenseTiles && tiledMatrix->semisparseTileMetaCore;
                 const bool tree_active    = (tiledMatrix->red_tree_separator_level > 0);
 

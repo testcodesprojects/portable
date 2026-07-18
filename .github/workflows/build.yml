@@ -280,11 +280,17 @@ jobs:
             *) echo "::error::glibc floor ${floor} exceeds 2.28 — a host lib leaked into the build"; exit 1 ;;
           esac
           echo "== runtime deps =="; ldd "$so" || true
-          # Full-static invariants: these must NOT appear as dynamic deps.
-          if ldd "$so" | grep -qE 'libstdc\+\+\.so|libbz2\.so|liblzma\.so|libz\.so'; then
-            echo "::error::a dep that should be static/dropped is still dynamic (libstdc++/bz2/lzma/z)"; exit 1
+          # Full-static invariants — the actual cross-distro KILLERS must be gone:
+          #   libstdc++.so  -> would reimpose a GLIBCXX_3.4.3x floor
+          #   libbz2/liblzma -> RHEL vs Debian soname mismatch (.so.1 vs .so.1.0)
+          # NOT libz: its soname (libz.so.1) is identical on every distro and it
+          # is pulled transitively by the (universal) libhwloc, so it is fine.
+          # numa/hwloc/gfortran/gomp/quadmath/gcc_s stay dynamic here — standard,
+          # universally-available, low-glibc runtime libs (README prerequisites).
+          if ldd "$so" | grep -qE 'libstdc\+\+\.so|libbz2\.so|liblzma\.so'; then
+            echo "::error::a dep that should be static/dropped is still dynamic (libstdc++/bz2/lzma)"; exit 1
           fi
-          echo "OK: glibc floor <= 2.28, no libstdc++/compression dynamic deps"
+          echo "OK: glibc floor $floor (<= 2.28), no libstdc++/bz2/lzma dynamic deps"
 
       # Prove the library actually WORKS on this OS/arch (not just that it
       # compiled): factorize + logdet + selinv + solve on a few matrices and

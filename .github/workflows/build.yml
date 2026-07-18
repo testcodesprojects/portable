@@ -35,6 +35,11 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # Run the job inside matrix.container when set (empty => directly on the
+    # runner). linux-x86_64 builds in rockylinux:9 so the .so's glibc/GLIBCXX
+    # floor is capped at what RHEL9 ships (GLIBC_2.34) — matching ibex — instead
+    # of ubuntu-latest's glibc 2.39, which is too new for the RHEL9 cluster.
+    container: ${{ matrix.container }}
     strategy:
       fail-fast: false      # one platform failing must not cancel the others
       matrix:
@@ -42,6 +47,7 @@ jobs:
           - name: linux-x86_64
             os: ubuntu-latest
             arch: x86_64
+            container: rockylinux:9
           - name: macos-apple-arm64
             os: macos-14           # Apple Silicon (M1) runner
             arch: arm64
@@ -62,8 +68,9 @@ jobs:
         # not git submodules, so no submodule fetch is needed.
 
       # ---- Linux deps: gcc/gfortran, hwloc, numa, SCOTCH compression libs ----
-      - name: Linux system deps
-        if: runner.os == 'Linux'
+      # apt path: only when NOT in a container (arm64 Linux runs on the host).
+      - name: Linux system deps (apt)
+        if: runner.os == 'Linux' && !matrix.container
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -71,12 +78,25 @@ jobs:
             libhwloc-dev libnuma-dev \
             zlib1g-dev libbz2-dev liblzma-dev
 
+      # ---- Rocky Linux 9 container deps (dnf): the RHEL9-glibc build path. ----
+      # crb (CodeReady Builder) is where hwloc-devel / numactl-devel live on RHEL9.
+      # git/wget/which/file/diffutils/python3 cover checkout fallback + the build
+      # scripts and smoke tests (the minimal rockylinux:9 image ships almost none).
+      - name: Linux system deps (Rocky 9 container)
+        if: matrix.container
+        run: |
+          dnf -y install dnf-plugins-core
+          dnf config-manager --set-enabled crb
+          dnf -y install gcc gcc-c++ gcc-gfortran make pkgconf-pkg-config \
+            hwloc-devel numactl-devel zlib-devel bzip2-devel xz-devel \
+            git wget which file diffutils python3
+
       # ---- Linux BLAS: Intel oneAPI MKL (embedded statically into the .so) ----
       # Simpler alternative: replace this whole step with
       #   sudo apt-get install -y libopenblas-dev liblapacke-dev
       # and make.inc auto-detects OpenBLAS instead (dynamic dep, no embedding).
-      - name: Install Intel MKL (Linux x86_64)
-        if: runner.os == 'Linux' && matrix.arch == 'x86_64'
+      - name: Install Intel MKL (Linux x86_64, apt)
+        if: runner.os == 'Linux' && matrix.arch == 'x86_64' && !matrix.container
         run: |
           wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
             | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi.gpg > /dev/null
@@ -84,6 +104,22 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/oneAPI.list
           sudo apt-get update
           sudo apt-get install -y intel-oneapi-mkl-devel
+
+      # MKL in the Rocky 9 container via Intel's yum repo. Installs to the same
+      # /opt/intel/oneapi path, so the Build step's `source setvars.sh` is unchanged.
+      - name: Install Intel MKL (Rocky 9 container)
+        if: matrix.container && matrix.arch == 'x86_64'
+        run: |
+          tee /etc/yum.repos.d/oneAPI.repo <<'EOF'
+          [oneAPI]
+          name=Intel oneAPI repository
+          baseurl=https://yum.repos.intel.com/oneapi
+          enabled=1
+          gpgcheck=1
+          repo_gpgcheck=1
+          gpgkey=https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
+          EOF
+          dnf -y install intel-oneapi-mkl-devel
 
       # ---- Linux arm64 BLAS: OpenBLAS (MKL is x86-only). make.inc auto-detects
       # OpenBLAS via pkg-config; the .so links it dynamically. ----

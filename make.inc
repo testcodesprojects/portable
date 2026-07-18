@@ -747,7 +747,16 @@ SCOTCH_STATIC_LIBS :=
 # compiled on Linux (see tools/process/Makefile). macOS and Windows build SCOTCH
 # without it, so no compression libs are needed — and -llzma would fail to link
 # there.
-ifeq ($(PLATFORM),linux)
+# STILES_SCOTCH_COMPRESS: SCOTCH's compressed-graph-FILE support (gz/bz2/lzma) is
+# UNUSED by sTiles (it feeds SCOTCH in-memory graphs via the API, never reads
+# .grf files), so it is pure dependency weight. Turning it OFF (=0) drops the
+# -lz/-lbz2/-llzma link deps AND the matching -DCOMMON_FILE_COMPRESS_* compile
+# defines (tools/process/Makefile), which removes the libbz2.so.1 (RHEL) vs
+# libbz2.so.1.0 (Debian) soname mismatch, the last cross-distro portability
+# snag. Default ON to preserve the historical bit-identical ordering build;
+# the portable/redistributable artifact builds with STILES_SCOTCH_COMPRESS=0.
+STILES_SCOTCH_COMPRESS ?= 1
+ifeq ($(PLATFORM)$(STILES_SCOTCH_COMPRESS),linux1)
     SCOTCH_EXTRA_LIBS := -lz -lbz2 -llzma
 else
     SCOTCH_EXTRA_LIBS :=

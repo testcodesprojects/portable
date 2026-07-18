@@ -173,7 +173,15 @@ EXTERN_OBJS  += $(SCO_SRC_OBJS) $(SCO_GEN_OBJS)
 ifeq ($(PLATFORM),linux)
     SCO_AFFINITY_DEF := -DCOMMON_PTHREAD_AFFINITY_LINUX
     SCO_OS_DEF       :=
-    SCO_COMPRESS_DEF := -DCOMMON_FILE_COMPRESS_BZ2 -DCOMMON_FILE_COMPRESS_GZ -DCOMMON_FILE_COMPRESS_LZMA
+    # Compressed graph-FILE support is unused by sTiles (see make.inc note); the
+    # portable artifact builds with STILES_SCOTCH_COMPRESS=0 to drop it and its
+    # -lz/-lbz2/-llzma deps. Default ON preserves the bit-identical Linux build.
+    STILES_SCOTCH_COMPRESS ?= 1
+    ifeq ($(STILES_SCOTCH_COMPRESS),1)
+        SCO_COMPRESS_DEF := -DCOMMON_FILE_COMPRESS_BZ2 -DCOMMON_FILE_COMPRESS_GZ -DCOMMON_FILE_COMPRESS_LZMA
+    else
+        SCO_COMPRESS_DEF :=
+    endif
 else ifeq ($(PLATFORM),windows)
     # -DCOMMON_OS_WINDOWS makes SCOTCH's common.h take its Windows path
     # (io.h/windows.h, skip unistd.h, no sys/resource.h|sys/time.h — those are

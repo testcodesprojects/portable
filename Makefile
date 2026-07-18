@@ -145,8 +145,24 @@ else
     GFORTRAN_LINK := -lgfortran
 endif
 
+# Full-static C++ runtime: embed libstdc++ and libgcc so libstiles.so carries no
+# GLIBCXX_* / libgcc_s runtime floor. After the glibc floor itself (set by the
+# build container), this is the biggest portability lever: it removes the exact
+# `GLIBCXX_3.4.3x' / libstdc++ mismatch that breaks cross-distro deployment.
+# Safe for libstiles specifically: its public ABI is extern "C" and stiles.map
+# localizes every embedded C++ symbol, so no C++ object or exception crosses the
+# boundary into a host that already has its own libstdc++. Default ON for Linux
+# standalone builds; STILES_STATIC_CXX=0 keeps libstdc++.so.6 a dynamic dep.
+# (libgomp stays dynamic: its .a is commonly non-PIC, and libgomp.so.1 is a
+# universal, low-glibc gcc-runtime lib, so it is not a portability concern.)
+STILES_STATIC_CXX ?= $(if $(filter linux,$(PLATFORM)),$(STANDALONE_SO),0)
+ifeq ($(STILES_STATIC_CXX),1)
+    STATIC_CXX_LINK := -static-libstdc++ -static-libgcc
+endif
+
 LDFLAGS_SHARED := $(SANITIZE_LDFLAGS) $(OPENMP_LIBS) $(NUMA_LINK) \
-                  $(HWLOC_LINK) $(CUDA_LIB) $(LIBLAPACK_LINK) $(GFORTRAN_LINK)
+                  $(HWLOC_LINK) $(CUDA_LIB) $(LIBLAPACK_LINK) $(GFORTRAN_LINK) \
+                  $(STATIC_CXX_LINK)
 
 # macOS: fold OpenBLAS + LAPACKE + libomp + hwloc + gfortran INTO the single
 # libstiles.dylib (the macOS analog of the Linux .so embedding MKL). Each dep's

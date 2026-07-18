@@ -36,9 +36,10 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     # Run the job inside matrix.container when set (empty => directly on the
-    # runner). linux-x86_64 builds in rockylinux:9 so the .so's glibc/GLIBCXX
-    # floor is capped at what RHEL9 ships (GLIBC_2.34) — matching ibex — instead
-    # of ubuntu-latest's glibc 2.39, which is too new for the RHEL9 cluster.
+    # runner). linux-x86_64 builds in manylinux_2_28 (glibc 2.28) so the .so
+    # runs on essentially every x86-64 Linux since ~2018 (RHEL/Rocky 8+, Ubuntu
+    # 20.04+, Debian 11+, ibex). Combined with the full-static link (below) the
+    # artifact carries no GLIBCXX / libstdc++ / libbz2-soname floor either.
     container: ${{ matrix.container }}
     strategy:
       fail-fast: false      # one platform failing must not cancel the others
@@ -47,7 +48,7 @@ jobs:
           - name: linux-x86_64
             os: ubuntu-latest
             arch: x86_64
-            container: rockylinux:9
+            container: quay.io/pypa/manylinux_2_28_x86_64
           - name: macos-apple-arm64
             os: macos-14           # Apple Silicon (M1) runner
             arch: arm64
@@ -78,18 +79,28 @@ jobs:
             libhwloc-dev libnuma-dev \
             zlib1g-dev libbz2-dev liblzma-dev
 
-      # ---- Rocky Linux 9 container deps (dnf): the RHEL9-glibc build path. ----
-      # crb (CodeReady Builder) is where hwloc-devel / numactl-devel live on RHEL9.
-      # git/wget/which/file/diffutils/python3 cover checkout fallback + the build
-      # scripts and smoke tests (the minimal rockylinux:9 image ships almost none).
-      - name: Linux system deps (Rocky 9 container)
+      # ---- manylinux_2_28 container deps (AlmaLinux 8, glibc 2.28). The image
+      # already ships a C++20 gcc-toolset, gfortran, make, git and python. We
+      # only add topology libs (hwloc/numa) from the powertools repo. No
+      # zlib/bzip2/xz: the portable artifact builds with STILES_SCOTCH_COMPRESS=0
+      # (SCOTCH file compression is unused by sTiles), so those deps are dropped.
+      - name: Linux system deps (manylinux container)
         if: matrix.container
         run: |
-          dnf -y install dnf-plugins-core
-          dnf config-manager --set-enabled crb
-          dnf -y install gcc gcc-c++ gcc-gfortran make pkgconf-pkg-config \
-            hwloc-devel numactl-devel zlib-devel bzip2-devel xz-devel \
-            git wget which file diffutils python3
+          yum -y install dnf-plugins-core || yum -y install 'dnf-command(config-manager)'
+          yum config-manager --set-enabled powertools 2>/dev/null \
+            || yum config-manager --set-enabled crb 2>/dev/null || true
+          yum -y install hwloc-devel numactl-devel pkgconfig which file
+          # Persist the C++20 gcc-toolset onto PATH/LD_LIBRARY_PATH for EVERY
+          # later step (build + smoke both compile C++20; the base gcc 8.5 can't).
+          for e in /opt/rh/gcc-toolset-*/enable; do
+            [ -f "$e" ] || continue
+            source "$e"
+            echo "$PATH" | tr ':' '\n' | grep gcc-toolset >> "$GITHUB_PATH" || true
+            echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+            break
+          done
+          gcc --version | head -1; gfortran --version | head -1
 
       # ---- Linux BLAS: Intel oneAPI MKL (embedded statically into the .so) ----
       # Simpler alternative: replace this whole step with
@@ -105,9 +116,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y intel-oneapi-mkl-devel
 
-      # MKL in the Rocky 9 container via Intel's yum repo. Installs to the same
+      # MKL in the manylinux container via Intel's yum repo. Installs to the same
       # /opt/intel/oneapi path, so the Build step's `source setvars.sh` is unchanged.
-      - name: Install Intel MKL (Rocky 9 container)
+      # The static MKL .a is embedded into libstiles.so (self-contained, no runtime
+      # MKL needed) and runtime-dispatches AVX2/AVX-512/AMX regardless of build host.
+      - name: Install Intel MKL (manylinux container)
         if: matrix.container && matrix.arch == 'x86_64'
         run: |
           tee /etc/yum.repos.d/oneAPI.repo <<'EOF'
@@ -161,9 +174,19 @@ jobs:
       # sTiles falls back to cblas_dgemm (OpenBLAS), so the build stays robust.
       - name: Build libstiles
         run: |
+          # In the manylinux container the C++20 gcc-toolset may not be on PATH
+          # for non-login shells; activate it explicitly (no-op elsewhere).
+          for e in /opt/rh/gcc-toolset-*/enable; do [ -f "$e" ] && source "$e" && break; done
           if [ "${{ runner.os }}" = "Linux" ] && [ "${{ matrix.arch }}" = "x86_64" ]; then
             source /opt/intel/oneapi/setvars.sh || true
-            MAKEARGS="MARCH=avx2"                       # Linux x86_64: MKL + AVX2
+            # Full-static, max-portable x86_64 artifact:
+            #   MARCH=avx2                 near-universal ISA (2013+); MKL/libxsmm
+            #                              still runtime-dispatch AVX-512/AMX.
+            #   STILES_SCOTCH_COMPRESS=0   drop unused SCOTCH z/bz2/lzma file deps
+            #                              (kills the libbz2 soname mismatch).
+            #   STILES_STATIC_CXX=1 is the default (STANDALONE_SO): embeds
+            #                              libstdc++/libgcc, so no GLIBCXX floor.
+            MAKEARGS="MARCH=avx2 STILES_SCOTCH_COMPRESS=0"
           else
             # Linux arm64 (OpenBLAS) & macOS Apple Silicon (-mcpu=apple-m1).
             # USE_LIBXSMM=0: skip the fragile libxsmm clone/build on arm64.
@@ -242,6 +265,26 @@ jobs:
           ls -lh dist/lib/
           if [ "${{ runner.os }}" = "macOS" ]; then otool -L dist/lib/libstiles.dylib; \
           else ldd dist/lib/libstiles.so; fi
+
+      # Portability guard for the manylinux artifact: prove the glibc floor and
+      # the full-static self-containment actually held (catches a host-lib leak
+      # or a regressed link flag before we ship the .so). Container build only.
+      - name: Verify portability floor (manylinux artifact)
+        if: matrix.container && matrix.arch == 'x86_64'
+        run: |
+          so=dist/lib/libstiles.so
+          floor=$(objdump -T "$so" | grep -oE 'GLIBC_2\.[0-9]+' | sort -uV | tail -1)
+          echo "glibc floor: ${floor:-none}"
+          case "${floor:-GLIBC_2.0}" in
+            GLIBC_2.2[0-8]|GLIBC_2.1?|GLIBC_2.0) : ;;   # <= 2.28 ok
+            *) echo "::error::glibc floor ${floor} exceeds 2.28 — a host lib leaked into the build"; exit 1 ;;
+          esac
+          echo "== runtime deps =="; ldd "$so" || true
+          # Full-static invariants: these must NOT appear as dynamic deps.
+          if ldd "$so" | grep -qE 'libstdc\+\+\.so|libbz2\.so|liblzma\.so|libz\.so'; then
+            echo "::error::a dep that should be static/dropped is still dynamic (libstdc++/bz2/lzma/z)"; exit 1
+          fi
+          echo "OK: glibc floor <= 2.28, no libstdc++/compression dynamic deps"
 
       # Prove the library actually WORKS on this OS/arch (not just that it
       # compiled): factorize + logdet + selinv + solve on a few matrices and

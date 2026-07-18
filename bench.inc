@@ -161,9 +161,13 @@ endif
 # --whole-archive; SCOTCH's compression libs are only needed on Linux (macOS
 # builds SCOTCH without gz/bz2/lzma file support — see tools/process/Makefile).
 # Recursive on purpose: LDFLAGS_EXTRA may be appended after this include.
-ifeq ($(PLATFORM),macos)
-    SCOTCH_COMPRESS_LIBS :=
-else
+# Gated by STILES_SCOTCH_COMPRESS (same knob as the library build): the portable
+# artifact builds the .so with =0, so speedtest must not pull -lbz2/-llzma either
+# (they are absent in the manylinux container and unused by the self-contained .so).
+STILES_SCOTCH_COMPRESS ?= 1
+ifeq ($(PLATFORM)$(STILES_SCOTCH_COMPRESS),linux1)
     SCOTCH_COMPRESS_LIBS := -lz -lbz2 -llzma
+else
+    SCOTCH_COMPRESS_LIBS :=
 endif
 LDFLAGS = $(LIBPATH) $(LIBS) $(BLAS_LIBS) $(OMP_LIBS) $(OPTIONAL_LIBS) $(LDFLAGS_EXTRA) $(GFORTRAN_BENCH_LINK) -lpthread -lm -ldl $(SCOTCH_COMPRESS_LIBS)

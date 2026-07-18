@@ -41,6 +41,13 @@ jobs:
     # 20.04+, Debian 11+, ibex). Combined with the full-static link (below) the
     # artifact carries no GLIBCXX / libstdc++ / libbz2-soname floor either.
     container: ${{ matrix.container }}
+    # SCOTCH file-compression (gz/bz2/lzma) is unused by sTiles. The portable
+    # x86_64 artifact (manylinux container) drops it (=0) so the .so carries no
+    # libbz2 soname dep; other targets keep it (=1). One source of truth: the
+    # library build, speedtest, and parallel_chol all read this env (via the
+    # STILES_SCOTCH_COMPRESS ?= 1 in make.inc / bench.inc / tools/process).
+    env:
+      STILES_SCOTCH_COMPRESS: ${{ matrix.container && '0' || '1' }}
     strategy:
       fail-fast: false      # one platform failing must not cancel the others
       matrix:
@@ -182,11 +189,11 @@ jobs:
             # Full-static, max-portable x86_64 artifact:
             #   MARCH=avx2                 near-universal ISA (2013+); MKL/libxsmm
             #                              still runtime-dispatch AVX-512/AMX.
-            #   STILES_SCOTCH_COMPRESS=0   drop unused SCOTCH z/bz2/lzma file deps
-            #                              (kills the libbz2 soname mismatch).
+            #   STILES_SCOTCH_COMPRESS=0   from the job env — drops unused SCOTCH
+            #                              z/bz2/lzma file deps (libbz2 soname).
             #   STILES_STATIC_CXX=1 is the default (STANDALONE_SO): embeds
             #                              libstdc++/libgcc, so no GLIBCXX floor.
-            MAKEARGS="MARCH=avx2 STILES_SCOTCH_COMPRESS=0"
+            MAKEARGS="MARCH=avx2"
           else
             # Linux arm64 (OpenBLAS) & macOS Apple Silicon (-mcpu=apple-m1).
             # USE_LIBXSMM=0: skip the fragile libxsmm clone/build on arm64.

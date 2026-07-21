@@ -345,7 +345,15 @@ int runASCOTCH(int** csr_i, int** csr_j, int N, int nnz, int m, int** perm, int*
 
     const int dim = N - m;
     if (dim <= 0) {
-        sTiles::Logger::errorf("runASCOTCH: dim = N - m <= 0 (N = %d, m = %d)", N, m);
+        // Not applicable, not a failure. ASCOTCH orders a sparse core and appends a
+        // dense border; when the smart permutation classifies every node as border
+        // (m == N, i.e. the matrix is dense) there is no core left for SCOTCH. The
+        // caller drops the candidate and continues, so this must not be reported at
+        // ERROR level -- it fired on every INLA/cblocks fit, where Q is dense by
+        // construction. The bake-off now skips dense inputs outright (see
+        // stiles_ordering.hpp), so this is a backstop for direct callers.
+        sTiles::Logger::infof("runASCOTCH: not applicable -- all %d nodes are dense"
+                              " border (m == N), no sparse core to order", N);
         std::free(save_rows); std::free(save_cols); std::free(pperm);
         return 1;
     }

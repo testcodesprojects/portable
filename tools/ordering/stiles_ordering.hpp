@@ -1734,6 +1734,25 @@ StatusCode symbolic_phase(sTiles_call **call_info, TiledMatrix **Tmatrix, int gr
                 + std::to_string(force_id_override));
         }
 
+        // Dense input: skip the bake-off entirely. When the lower triangle is
+        // (essentially) full there is no sparsity for an ordering to exploit --
+        // every candidate produces the same fill, so running 8 of them is pure
+        // preprocessing waste, and the ND/ASCOTCH variants additionally hit their
+        // "no sparse core" path (see ordering_scotch.cpp). This is not a corner
+        // case: cblocks sums k dense n x n kernels, so Q is dense on every fit.
+        // Threshold is 98%, not 100%, to absorb matrices stored without an
+        // explicit zero diagonal (or with a few structural zeros dropped).
+        // Gated on !have_user_perm so an explicit user choice still wins.
+        if (force_id_override == 0 && !have_user_perm) {
+            const long long full_tri = (long long)scheme.dim * ((long long)scheme.dim + 1) / 2;
+            if (full_tri > 0 && (long long)scheme.nnz * 100 >= full_tri * 98) {
+                force_id_override = 1;   // RCM: cheapest candidate, identity-like here
+                sTiles::Logger::timing("│   ↪ Dense input (nnz=" + std::to_string(scheme.nnz)
+                    + " of " + std::to_string(full_tri) + " lower-triangle entries):"
+                    " ordering cannot reduce fill; skipping the bake-off (id=1)");
+            }
+        }
+
         // User-selected candidate set: param[2] (sTiles_set_ordering_mode) is a
         // digit list in the PUBLIC ordering numbering (see STILES_ORD_* in
         // stiles.h): 1=RCM, 2=METIS, 3=SCOTCH, 4=ASCOTCH, 5=FSCOTCH, 6=AMD,

@@ -167,7 +167,7 @@ void sTiles_set_control_param(int index, int value);
  *        (1=RCM 2=METIS 3=SCOTCH 4=ASCOTCH 5=FSCOTCH 6=AMD 7=CAMD 8=COLAMD)
  *   - 3: Tile type mode (set via sTiles_set_tile_type_mode):
  *        0=dense, 1=semisparse, 2=non-uniform, 3=auto
- *        Default: 1 (semisparse) on all platforms
+ *        Default: 3 (auto) on all platforms
  *   - 4: Tile ordering mode (set via sTiles_set_tile_ordering_mode)
  *   - 5: Tile ordering size (set via sTiles_set_tile_ordering_size;
  *        -1 = auto: tile_size/2, the default)

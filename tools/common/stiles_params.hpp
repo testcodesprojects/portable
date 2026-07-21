@@ -71,7 +71,7 @@ inline constexpr int TileTypeMode            =  3; // sTiles_set_tile_type_mode
                                                    //       routes variant 0 through tools/sparse/)
                                                    //   3 = auto: run symbolic, then pick 0/1/2 from
                                                    //       occupancy, fill and degree skew.
-                                                   //   Default: 1 (semisparse) on all platforms.
+                                                   //   Default: 3 (auto) on all platforms.
                                                    //   The per-scheme resolution is snapshotted into
                                                    //   TiledMatrix::tile_type_mode at preprocess time;
                                                    //   compute-phase code reads the scheme field, not
@@ -135,14 +135,14 @@ inline constexpr int TreePathForce           = 26; // sTiles_set_tree_path_force
 
 /// The ONE default table. The only platform difference is UseOMP (slot 8):
 /// OMP (1) on macOS (no sched-affinity for the pthreads backend there),
-/// pthreads (0) on Linux. TileTypeMode (slot 3) defaults to semisparse (1)
+/// pthreads (0) on Linux. TileTypeMode (slot 3) defaults to auto (3)
 /// and TreePathEnable (slot 25) to ON on all platforms.
 #ifdef __APPLE__
 #define STILES_DEFAULT_PARAMS_INIT {                                          \
     /* [ 0] SemisparsePruningMode   */ 0,                                     \
     /* [ 1] UserTileSize            */ -1,                                    \
     /* [ 2] OrderingMode (deprec.)  */ 0,                                     \
-    /* [ 3] TileTypeMode            */ 1,                                     \
+    /* [ 3] TileTypeMode            */ 3,                                     \
     /* [ 4] TileOrderingStrategy    */ 14569,                                 \
     /* [ 5] TileOrderingThreshold   */ -1,                                    \
     /* [ 6] ForceNDOrdering         */ 0,                                     \
@@ -174,7 +174,7 @@ inline constexpr int TreePathForce           = 26; // sTiles_set_tree_path_force
     /* [ 0] SemisparsePruningMode   */ 0,                                     \
     /* [ 1] UserTileSize            */ -1,                                    \
     /* [ 2] OrderingMode (deprec.)  */ 0,                                     \
-    /* [ 3] TileTypeMode            */ 1,                                     \
+    /* [ 3] TileTypeMode            */ 3,                                     \
     /* [ 4] TileOrderingStrategy    */ 14569,                                 \
     /* [ 5] TileOrderingThreshold   */ -1,                                    \
     /* [ 6] ForceNDOrdering         */ 0,                                     \

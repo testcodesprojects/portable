@@ -269,6 +269,10 @@ jobs:
             exit 1
           fi
           echo "OK: macOS dylib is self-contained (system libs only; no Homebrew)"
+          # Drop the libstiles.so compatibility symlink from the artifact: on
+          # macOS the loadable file is libstiles.dylib, and upload-artifact would
+          # dereference the symlink into a full duplicate of the dylib.
+          rm -f dist/lib/libstiles.so
 
       - name: Sanity check the built library
         run: |

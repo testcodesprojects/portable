@@ -557,8 +557,11 @@ int chol_common(Handle* h, bool use_omp) {
         (nested_chol_par_env >= 0) ? (nested_chol_par_env == 1) : (n_ranks_req <= 4);
     bool force_pthreads = false;
     if (std::getenv("STILES_CHOL_CTX") && h->tasks.offsets.size() > 2) {
-        cpu_set_t cs; int ncpu = -1;
+        int ncpu = -1;
+#ifdef __linux__
+        cpu_set_t cs;
         if (sched_getaffinity(0, sizeof(cs), &cs) == 0) ncpu = CPU_COUNT(&cs);
+#endif
         std::fprintf(stderr, "[chol-ctx] group=%d ranks=%d in_par=%d level=%d act_lvl=%d max_lvl=%d aff=%d omp_max=%d\n",
             h->group_id, (int)h->tasks.offsets.size()-1, (int)omp_in_parallel(),
             omp_get_level(), omp_get_active_level(), omp_get_max_active_levels(),

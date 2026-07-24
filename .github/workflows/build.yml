@@ -19,7 +19,19 @@
 #
 # BLAS per platform (auto-detected by make.inc):
 #   Linux x86_64  -> Intel MKL (embedded static, self-contained .so)
+#   Linux arm64   -> pinned OpenBLAS built from source in-workflow (serial,
+#                    DYNAMIC_ARCH => runtime Neoverse/Graviton kernel dispatch),
+#                    embedded static: same self-contained story as MKL on x86
 #   macOS Apple   -> Homebrew OpenBLAS (+ lapack for LAPACKE)
+#
+# Every build job appends its speed table (+ CPU model) to the run summary, so
+# performance across commits — and Intel-vs-AMD runner luck — is visible without
+# log digging. Two extra diagnostics answer standing performance questions:
+#   macos-accelerate-bench   does Accelerate (Apple AMX) beat OpenBLAS here?
+#   linux-x86-blas-compare   does MKL beat OpenBLAS on this (Intel or AMD)
+#                            runner? (workflow_dispatch only)
+# On v* tags, the release job attaches every artifact to the GitHub Release
+# (workflow artifacts alone expire after 90 days).
 #
 # Trigger: on every push/tag, or manually from the Actions tab.
 ########################################################################
@@ -48,6 +60,8 @@ jobs:
     # STILES_SCOTCH_COMPRESS ?= 1 in make.inc / bench.inc / tools/process).
     env:
       STILES_SCOTCH_COMPRESS: ${{ matrix.container && '0' || '1' }}
+      # Pinned OpenBLAS for the arm64 from-source build (also the cache key).
+      OPENBLAS_VERSION: v0.3.29
     strategy:
       fail-fast: false      # one platform failing must not cancel the others
       matrix:
@@ -62,6 +76,11 @@ jobs:
           - name: linux-arm64
             os: ubuntu-24.04-arm   # GitHub arm64 Linux runner (free on public repos)
             arch: arm64
+            # Same portability treatment as x86_64: build in manylinux_2_28
+            # (AlmaLinux 8 aarch64, glibc 2.28) so the .so runs on essentially
+            # every arm64 Linux since ~2018 — the bare Ubuntu 24.04 runner
+            # would bake in a glibc 2.39 floor.
+            container: quay.io/pypa/manylinux_2_28_aarch64
           # NOTE: no macos-intel-x86_64 job. GitHub is retiring the Intel
           # (macos-13) runners, so that job just sits in the queue forever
           # ("waiting for a runner"). The Linux x86_64 build already ships full
@@ -141,11 +160,55 @@ jobs:
           EOF
           dnf -y install intel-oneapi-mkl-devel
 
-      # ---- Linux arm64 BLAS: OpenBLAS (MKL is x86-only). make.inc auto-detects
-      # OpenBLAS via pkg-config; the .so links it dynamically. ----
-      - name: Install OpenBLAS (Linux arm64)
-        if: runner.os == 'Linux' && matrix.arch == 'arm64'
-        run: sudo apt-get install -y libopenblas-dev liblapacke-dev
+      # ---- Linux arm64 BLAS: OpenBLAS pinned + built from source, then
+      # STATICALLY EMBEDDED into libstiles.so (MKL is x86-only, so this is the
+      # arm64 analog of the x86 static-MKL embed). Why from source and not the
+      # distro package: the EL8 container's OpenBLAS is years old (pre-Neoverse
+      # kernels), links dynamically (the consumer machine's OpenBLAS — version,
+      # threading, kernels — would decide performance), and its .a is not
+      # guaranteed PIC. The pinned build gives us:
+      #   DYNAMIC_ARCH=1  runtime kernel dispatch (Neoverse N1/V1/N2, A57...)
+      #                   regardless of build host — the arm analog of MKL's
+      #                   AVX2/AVX-512 runtime dispatch
+      #   USE_THREAD=0    serial BLAS: sTiles parallelizes at the tile level,
+      #                   matching the sequential-MKL choice on x86
+      #   USE_LOCKING=1   serial BLAS stays safe when called from many
+      #                   concurrent sTiles threads
+      # Cached on the pinned version, so the ~15 min build runs once.
+      - name: Cache static OpenBLAS (Linux arm64)
+        if: matrix.container && matrix.arch == 'arm64'
+        id: cache-openblas
+        uses: actions/cache@v4
+        with:
+          path: local/openblas
+          key: openblas-${{ env.OPENBLAS_VERSION }}-serial-pic-${{ matrix.name }}
+      - name: Build static OpenBLAS (Linux arm64)
+        if: matrix.container && matrix.arch == 'arm64' && steps.cache-openblas.outputs.cache-hit != 'true'
+        run: |
+          for e in /opt/rh/gcc-toolset-*/enable; do [ -f "$e" ] && source "$e" && break; done
+          git clone --depth 1 --branch "$OPENBLAS_VERSION" \
+            https://github.com/OpenMathLib/OpenBLAS.git openblas-src
+          make -C openblas-src -j"$(nproc)" \
+            TARGET=ARMV8 DYNAMIC_ARCH=1 USE_THREAD=0 USE_OPENMP=0 USE_LOCKING=1 \
+            NO_SHARED=1 > openblas-build.log 2>&1 \
+            || { tail -40 openblas-build.log; exit 1; }
+          make -C openblas-src install PREFIX="$PWD/local/openblas" NO_SHARED=1 \
+            >> openblas-build.log 2>&1
+          # The whole point is embedding into a .so — hard-fail now if the
+          # archive is not PIC rather than at the (far less readable)
+          # libstiles link. -shared permits undefined symbols, so only a
+          # genuine PIC-relocation failure can reject it.
+          t=$(mktemp)
+          if ! gcc -fPIC -shared -o "$t" \
+               -Wl,--whole-archive local/openblas/lib/libopenblas.a -Wl,--no-whole-archive \
+               >/dev/null 2>&1; then
+            rm -f "$t"
+            echo "::error::libopenblas.a is not PIC-embeddable — add -fPIC to the OpenBLAS build"
+            exit 1
+          fi
+          rm -f "$t"
+          echo "OK: static serial OpenBLAS $OPENBLAS_VERSION built and PIC-verified" \
+               "($(du -h local/openblas/lib/libopenblas.a | cut -f1))"
 
       # ---- macOS deps: gfortran + libomp + hwloc + OpenBLAS from Homebrew ----
       # BLAS = Homebrew OpenBLAS (+ lapack for the LAPACKE C interface). Apple's
@@ -197,9 +260,16 @@ jobs:
             #                              sTiles-own solve/selinv kernels (AVX2
             #                              default clone => can't hurt AVX2 CPUs).
             MAKEARGS="MARCH=avx2 STILES_FMV=1"
+          elif [ "${{ matrix.name }}" = "linux-arm64" ]; then
+            # Embed the pinned static OpenBLAS built above. sTiles-own code
+            # gets make.inc's arm64 default: generic armv8-a ISA with
+            # -mtune=neoverse-n1 scheduling (runs on every arm64, tuned for
+            # the server cores that actually execute this artifact).
+            # USE_LIBXSMM=0: skip the fragile libxsmm build on arm64.
+            MAKEARGS="USE_LIBXSMM=0 OPENBLAS_STATIC_ROOT=$PWD/local/openblas"
           else
-            # Linux arm64 (OpenBLAS) & macOS Apple Silicon (-mcpu=apple-m1).
-            # USE_LIBXSMM=0: skip the fragile libxsmm clone/build on arm64.
+            # macOS Apple Silicon (-mcpu=apple-m1).
+            # USE_LIBXSMM=0: skip the fragile libxsmm clone/build here too.
             MAKEARGS="USE_LIBXSMM=0"
           fi
           # Capture the full (very verbose) build to a file; on failure surface
@@ -280,11 +350,11 @@ jobs:
           if [ "${{ runner.os }}" = "macOS" ]; then otool -L dist/lib/libstiles.dylib; \
           else ldd dist/lib/libstiles.so; fi
 
-      # Portability guard for the manylinux artifact: prove the glibc floor and
-      # the full-static self-containment actually held (catches a host-lib leak
-      # or a regressed link flag before we ship the .so). Container build only.
+      # Portability guard for the manylinux artifacts (x86_64 AND arm64): prove
+      # the glibc floor and the full-static self-containment actually held
+      # (catches a host-lib leak or a regressed link flag before we ship).
       - name: Verify portability floor (manylinux artifact)
-        if: matrix.container && matrix.arch == 'x86_64'
+        if: matrix.container
         run: |
           so=dist/lib/libstiles.so
           floor=$(objdump -T "$so" | grep -oE 'GLIBC_2\.[0-9]+' | sort -uV | tail -1)
@@ -304,15 +374,38 @@ jobs:
           if ldd "$so" | grep -qE 'libstdc\+\+\.so|libbz2\.so|liblzma\.so'; then
             echo "::error::a dep that should be static/dropped is still dynamic (libstdc++/bz2/lzma)"; exit 1
           fi
+          # arm64: the pinned OpenBLAS must be EMBEDDED — a dynamic libopenblas
+          # NEEDED entry would hand performance back to whatever OpenBLAS the
+          # consumer machine happens to have (or fail to load where none exists).
+          if [ "${{ matrix.arch }}" = "arm64" ] && ldd "$so" | grep -q 'libopenblas'; then
+            echo "::error::libopenblas is a dynamic dep — the static embed regressed"; exit 1
+          fi
           echo "OK: glibc floor $floor (<= 2.28), no libstdc++/bz2/lzma dynamic deps"
 
       # Prove the library actually WORKS on this OS/arch (not just that it
       # compiled): factorize + logdet + selinv + solve on a few matrices and
       # gate on the solve residual. `make dist` already produced lib/libstiles.*.
+      # The timing table (+ CPU model — hosted x86 runners are randomly Intel
+      # Xeon or AMD EPYC, which matters when reading MKL numbers) goes to the
+      # run summary page, so speed across commits needs no log digging.
       - name: Smoke test (speed + correctness)
         run: |
+          set -o pipefail   # ./run.sh must still gate the job through the tee
           if [ "${{ runner.os }}" = "Linux" ]; then source /opt/intel/oneapi/setvars.sh || true; fi
-          cd bench && ./run.sh
+          if [ "${{ matrix.name }}" = "linux-arm64" ]; then
+            export OPENBLAS_STATIC_ROOT="$PWD/local/openblas"   # bench.inc BLAS link
+          fi
+          CPU="$(lscpu 2>/dev/null | sed -n 's/^Model name:[[:space:]]*//p' | head -1)"
+          [ -n "$CPU" ] || CPU="$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo unknown)"
+          cd bench
+          ./run.sh | tee speed.txt
+          {
+            echo "### ${{ matrix.name }} speed"
+            echo "CPU: $CPU"
+            echo '```'
+            cat speed.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # Nested parallelism: run several Cholesky factorizations CONCURRENTLY,
       # each on its own cores (the nested-groups pattern). Checks every call
@@ -322,6 +415,9 @@ jobs:
       - name: Parallel factorization test (concurrent chols)
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then source /opt/intel/oneapi/setvars.sh || true; fi
+          if [ "${{ matrix.name }}" = "linux-arm64" ]; then
+            export OPENBLAS_STATIC_ROOT="$PWD/local/openblas"   # bench.inc BLAS link
+          fi
           export OMP_STACKSIZE=256M   # big OMP-thread stack (macOS default backend)
           cd bench
           make -s parallel_chol
@@ -371,6 +467,53 @@ jobs:
           echo "::group::ASan — spacetime with SCOTCH context ON"
           STILES_SCOTCH_CTX=1 ./order_only mats/spacetime.mtx 1 40 || true
           echo "::endgroup::"
+
+  # PERFORMANCE diagnostic (non-gating): build against Apple's Accelerate
+  # framework instead of OpenBLAS and run the same speed table. Accelerate's
+  # BLAS runs on the M-series AMX matrix units, which OpenBLAS cannot reach,
+  # and is commonly 2-4x faster on the mid-size dgemm sTiles feeds it — but
+  # sTiles needs LAPACKE, which Accelerate historically lacked (the reason the
+  # shipped artifact uses OpenBLAS). This job MEASURES both questions at once:
+  # if the build fails, the summary shows the exact LAPACKE gap a shim would
+  # have to cover; if it succeeds, compare its speed table with the
+  # macos-apple-arm64 job's (same runner class) to decide whether the shipped
+  # macOS artifact should switch BLAS.
+  macos-accelerate-bench:
+    name: macos-accelerate-bench-diagnostic
+    runs-on: macos-14
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      # Deliberately NO openblas/lapack: make.inc's STILES_FORCE_ACCELERATE
+      # knob skips BLAS detection outright, and bench.inc falls back to
+      # -framework Accelerate when Homebrew OpenBLAS is absent — so the
+      # library AND the bench binaries genuinely run on Accelerate.
+      - name: deps
+        run: brew install gcc libomp hwloc
+      - name: Build libstiles against Accelerate
+        run: |
+          if ! make all USE_LIBXSMM=0 STILES_FORCE_ACCELERATE=1 > build.log 2>&1; then
+            {
+              echo '### Accelerate build: FAILED — this is the LAPACKE gap a shim must cover'
+              echo '```'
+              grep -nE 'error:|fatal error:|Undefined symbol|ld: ' build.log | head -30
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::group::build.log tail"; tail -40 build.log; echo "::endgroup::"
+            exit 1
+          fi
+          tail -3 build.log
+      - name: Speed table on Accelerate
+        run: |
+          set -o pipefail
+          cd bench
+          ./run.sh | tee accel_speed.txt
+          {
+            echo '### macOS Accelerate (AMX) speed — compare with the macos-apple-arm64 table'
+            echo '```'
+            cat accel_speed.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Windows portability PROBE (diagnostic, non-gating). Compile-checks sTiles'
   # OWN C++ sources with the MinGW-w64 UCRT64 toolchain (x86_64-w64-mingw32ucrt-*,
@@ -492,3 +635,97 @@ jobs:
             lib/libstiles.dll.a
             tools/include/stiles.h
           if-no-files-found: ignore
+
+  # PERFORMANCE diagnostic (non-gating, manual only): MKL vs OpenBLAS on the
+  # SAME runner. Hosted x86 runners are randomly Intel Xeon or AMD EPYC, and
+  # MKL's kernel dispatch on AMD is historically conservative — so the shipped
+  # MKL-embedded artifact may be leaving speed on the table for AMD users.
+  # Run this a few times from the Actions tab (the CPU model heads each
+  # summary) and compare tables per vendor; if OpenBLAS wins on EPYC, ship a
+  # second linux-x86_64-openblas artifact. Both passes build sTiles-own code
+  # identically (MARCH=avx2 STILES_FMV=1) so BLAS is the only variable.
+  # ORDER MATTERS: the OpenBLAS pass runs BEFORE MKL is installed — once MKL
+  # exists under /opt/intel, make.inc and bench.inc would prefer it and the
+  # dynamic loader could resolve BLAS symbols against it, contaminating the
+  # OpenBLAS measurement.
+  linux-x86-blas-compare:
+    name: linux-x86-blas-compare-diagnostic
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            g++ gfortran make pkg-config libhwloc-dev libnuma-dev \
+            zlib1g-dev libbz2-dev liblzma-dev \
+            libopenblas-dev liblapacke-dev
+      - name: Pass 1 — OpenBLAS (before MKL exists on the machine)
+        run: |
+          set -o pipefail
+          CPU="$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1)"
+          echo "### MKL vs OpenBLAS — $CPU" >> "$GITHUB_STEP_SUMMARY"
+          make all MARCH=avx2 STILES_FMV=1 USE_OPENBLAS=1 > ob_build.log 2>&1 \
+            || { tail -30 ob_build.log; exit 1; }
+          ( cd bench && ./run.sh | tee ../ob_speed.txt )
+          {
+            echo '#### OpenBLAS (Ubuntu package; sTiles pins it to 1 thread)'
+            echo '```'; cat ob_speed.txt; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Install Intel MKL
+        run: |
+          wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+            | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/oneapi.gpg] https://apt.repos.intel.com/oneapi all main" \
+            | sudo tee /etc/apt/sources.list.d/oneAPI.list
+          sudo apt-get update
+          sudo apt-get install -y intel-oneapi-mkl-devel
+      - name: Pass 2 — MKL (the shipped x86_64 configuration)
+        run: |
+          set -o pipefail
+          source /opt/intel/oneapi/setvars.sh || true
+          make cleanall >/dev/null 2>&1 || true
+          rm -f bench/speedtest bench/parallel_chol
+          make all MARCH=avx2 STILES_FMV=1 > mkl_build.log 2>&1 \
+            || { tail -30 mkl_build.log; exit 1; }
+          ( cd bench && ./run.sh | tee ../mkl_speed.txt )
+          {
+            echo '#### MKL (sequential — the shipped x86_64 configuration)'
+            echo '```'; cat mkl_speed.txt; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # On v* tags: attach every built artifact to the GitHub Release, so users
+  # download libstiles from the Releases page instead of fishing 90-day
+  # workflow artifacts out of Actions runs. Uses the preinstalled gh CLI (no
+  # third-party release action). The Windows probe's dll (if any) is picked up
+  # too when it finished before this job; it is diagnostic, so not waited on.
+  release:
+    name: release (attach artifacts)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: libstiles-*
+          path: artifacts
+      - name: Pack one tarball per platform
+        run: |
+          cd artifacts
+          for d in libstiles-*/; do
+            n="${d%/}"
+            tar czf "${n}-${GITHUB_REF_NAME}.tar.gz" -C "$d" .
+          done
+          ls -lh *.tar.gz
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --title "$GITHUB_REF_NAME" --generate-notes artifacts/*.tar.gz \
+            || gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --clobber artifacts/*.tar.gz

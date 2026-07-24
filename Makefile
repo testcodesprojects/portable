@@ -91,7 +91,7 @@ endif
 # threading layer. Falls back to dynamic LIBLAPACK otherwise.
 ifneq ($(strip $(LAPACKE_STATIC_LIBS)),)
     LIBLAPACK_LINK := $(LAPACKE_STATIC_LIBS) -lpthread -lm -ldl
-    $(info LAPACK: embedding MKL static archives into libstiles.so)
+    $(info LAPACK: embedding static BLAS archives ($(BLAS_DETECTED)) into libstiles.so)
 else
     LIBLAPACK_LINK := $(LIBLAPACK)
 endif
@@ -115,19 +115,24 @@ endif
 # -static-libgfortran is unreliable with g++ + explicit -lgfortran, so force it
 # with -Bstatic around -lgfortran. This only works when libgfortran.a is PIC:
 # some toolchains (e.g. gcc-14 on Ubuntu 24.04) ship a non-PIC archive whose
-# TLS code carries R_X86_64_TPOFF32 (initial-exec) relocations that cannot go
-# into a -shared object, so -Bstatic fails the libstiles.so link. Probe the
-# actual archive and fall back to dynamic -lgfortran (a libgfortran.so.5
-# runtime dep) when it is not embeddable. The version script localizes the
-# embedded gfortran symbols when the static path is used.
+# TLS relocations cannot go into a -shared object, so -Bstatic would fail the
+# libstiles.so link. Probe by ACTUALLY test-linking the archive into a
+# throwaway .so (arch-neutral: the bad reloc names differ between x86_64
+# TPOFF32 and aarch64 TLSLE, so grepping one name misses the other; -shared
+# permits undefined symbols, so only a genuine PIC failure rejects it). Fall
+# back to dynamic -lgfortran (a libgfortran.so.5 runtime dep) when the archive
+# is not embeddable. The version script localizes the embedded gfortran
+# symbols when the static path is used.
 ifeq ($(STANDALONE_SO)$(PLATFORM),1linux)
     GFORTRAN_LINK := $(shell \
-        a=$$($(CXX) -print-file-name=libgfortran.a 2>/dev/null); \
-        if [ -f "$$a" ] && readelf -r "$$a" 2>/dev/null | grep -q 'R_X86_64_TPOFF32'; then \
-            echo '-lgfortran'; \
-        else \
+        a=$$($(CXX_BASE) -print-file-name=libgfortran.a 2>/dev/null); \
+        t=$$(mktemp); \
+        if [ -f "$$a" ] && $(CXX_BASE) -fPIC -shared -o "$$t" \
+            -Wl,--whole-archive "$$a" -Wl,--no-whole-archive >/dev/null 2>&1; then \
             echo '-Wl,-Bstatic -lgfortran -Wl,-Bdynamic'; \
-        fi)
+        else \
+            echo '-lgfortran'; \
+        fi; rm -f "$$t")
 else ifeq ($(PLATFORM),macos)
     # clang++ has no gfortran runtime in its default search path; locate it via
     # gfortran itself (Homebrew gcc) and bake an rpath. If gfortran is missing,
@@ -172,7 +177,10 @@ LDFLAGS_SHARED := $(SANITIZE_LDFLAGS) $(OPENMP_LIBS) $(NUMA_LINK) \
 # Only engages when the full set of archives is present; otherwise the dynamic
 # LDFLAGS_SHARED above is kept and the CI dylibbundler step bundles the deps as
 # siblings instead (still Homebrew-free, just not a single file).
-ifeq ($(PLATFORM),macos)
+# Only when the build actually resolved to OpenBLAS: force-loading
+# libopenblas.a into a dylib whose code calls a DIFFERENT backend (Accelerate/
+# ARMPL) would embed a dead second BLAS and invite duplicate-symbol clashes.
+ifeq ($(PLATFORM)$(BLAS_DETECTED),macosopenblas)
     MACOS_BREW  := $(shell brew --prefix 2>/dev/null || echo /opt/homebrew)
     # Wildcards catch the versioned/plain archive names Homebrew uses
     # (e.g. libopenblas.a or libopenblasp-r0.3.33.a). LAPACKE is taken from

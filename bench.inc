@@ -93,6 +93,11 @@ ifeq ($(PLATFORM),macos)
     else
         BLAS_LIBS = -framework Accelerate
     endif
+else ifneq ($(wildcard $(OPENBLAS_STATIC_ROOT)/lib/libopenblas.a),)
+    # Same knob as make.inc: the portable arm64 lane builds a pinned static
+    # OpenBLAS from source (no system BLAS exists in the manylinux container,
+    # so the -lblas/-llapack fallback below would fail the bench link).
+    BLAS_LIBS = $(OPENBLAS_STATIC_ROOT)/lib/libopenblas.a
 else
     # MKLROOT is set by Intel oneAPI's setvars.sh; otherwise probe a couple of
     # well-known install locations. We bake -L and -Wl,-rpath into the binary

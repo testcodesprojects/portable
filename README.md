@@ -15,7 +15,9 @@ for portability (AVX2 baseline on x86-64; Apple Silicon native on arm64).
 
 - After editing any file, plain `make` rebuilds only what changed.
 - `make MARCH=native` tunes for the current CPU; `make MARCH=avx512` targets
-  AVX-512 servers; `make MARCH=generic` runs on any x86-64.
+  AVX-512 servers; `make MARCH=generic` runs on any x86-64. On Linux arm64 the
+  default is generic armv8-a tuned for Neoverse server cores;
+  `make MARCH=armv82` raises the ISA floor to armv8.2-a (all cloud ARM).
 - `make show-config` prints the detected platform, compiler, and BLAS.
 - `make help` lists all targets.
 
@@ -44,8 +46,15 @@ timings. Exits non-zero if anything fails. See [bench/README.md](bench/README.md
 ## Continuous integration
 
 [.github/workflows/build.yml](.github/workflows/build.yml) builds the library
-natively on Linux, Intel macOS, and Apple Silicon, runs the speed test on each,
-and uploads the resulting libraries as artifacts.
+natively on Linux x86_64 (manylinux, embedded static MKL), Linux arm64
+(manylinux, embedded static OpenBLAS — pinned, serial, runtime kernel
+dispatch), and Apple Silicon macOS (self-contained dylib), runs the speed +
+correctness test on each, and uploads the libraries as artifacts. Each job's
+timing table (with the runner's CPU model) lands on the run summary page, and
+`v*` tags attach all artifacts to a GitHub Release. Two on-demand diagnostics
+answer standing performance questions: `macos-accelerate-bench` (Accelerate/
+AMX vs OpenBLAS) and `linux-x86-blas-compare` (MKL vs OpenBLAS on the Intel or
+AMD runner the job happens to land on; `workflow_dispatch` only).
 
 ## Install
 

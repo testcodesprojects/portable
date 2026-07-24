@@ -25,6 +25,8 @@
 #   make MARCH=avx512           # AVX-512 servers (NOT Meteor Lake laptops)
 #   make MARCH=native           # Tune for THIS machine (benchmark nodes)
 #   make MARCH=generic          # Any x86-64 CPU
+#   make MARCH=armv82           # Linux arm64: armv8.2-a floor (all cloud ARM;
+#                               # default is generic armv8-a + Neoverse tuning)
 #
 # Build Modes:
 #   make BUILD=release          # Optimized build (default) -O3
@@ -230,16 +232,23 @@ else
     #                 SIGILLs on chips without it, e.g. this Meteor Lake laptop
     #   MARCH=native  tune for THIS machine (node-pinned benchmarking runs)
     #   MARCH=generic any x86-64 CPU (maximum compatibility)
-    # arm64/aarch64: native → -mcpu=native; otherwise the portable baseline
-    # (-mcpu=apple-m1 on macOS covers every Apple Silicon Mac).
+    # arm64/aarch64: native → -mcpu=native; macOS → -mcpu=apple-m1 (covers every
+    # Apple Silicon Mac). Linux arm64 default keeps the generic armv8-a ISA but
+    # SCHEDULES for the Neoverse server cores that actually run the portable
+    # artifact (-mtune changes instruction selection order only, never the ISA,
+    # so it cannot SIGILL anywhere). MARCH=armv82 opts into the armv8.2-a ISA
+    # floor: every cloud/server ARM since ~2019 (Graviton2+, Ampere Altra,
+    # NVIDIA Grace) — but NOT Cortex-A72-class boards (e.g. Raspberry Pi 4).
     MARCH ?= avx2
     ifneq ($(filter arm64 aarch64,$(UNAME_M)),)
         ifeq ($(MARCH),native)
             ARCH_TARGET_FLAG := -mcpu=native
         else ifeq ($(PLATFORM),macos)
             ARCH_TARGET_FLAG := -mcpu=apple-m1
+        else ifeq ($(MARCH),armv82)
+            ARCH_TARGET_FLAG := -march=armv8.2-a -mtune=neoverse-n1
         else
-            ARCH_TARGET_FLAG :=
+            ARCH_TARGET_FLAG := -mtune=neoverse-n1
         endif
     else
         ifeq ($(MARCH),native)
@@ -315,10 +324,43 @@ USE_OPENBLAS ?= 0
 # Auto-detect BLAS/LAPACK
 BLAS_DETECTED := none
 
+# Step 0a: Pre-built static OpenBLAS for EMBEDDING into libstiles.so (used by
+# the portable Linux arm64 artifact, where no static MKL exists). Point
+# OPENBLAS_STATIC_ROOT at a prefix holding include/ and lib/libopenblas.a that
+# was built PIC + serial (USE_THREAD=0 USE_LOCKING=1) + DYNAMIC_ARCH=1, e.g. by
+# the CI's from-source build. The archive is embedded exactly like the MKL
+# static archives on x86_64 (LAPACKE_STATIC_LIBS → LIBLAPACK_LINK in the
+# Makefile), so the shipped .so carries its own runtime-dispatching BLAS and
+# the consumer machine's OpenBLAS (version, threading, kernels) is irrelevant.
+# OpenBLAS's own build bakes LAPACK+LAPACKE in, so one archive covers all.
+OPENBLAS_STATIC_ROOT ?=
+ifneq ($(wildcard $(OPENBLAS_STATIC_ROOT)/lib/libopenblas.a),)
+    BLAS_DETECTED := openblas
+    LAPACKE_INC := -I$(OPENBLAS_STATIC_ROOT)/include
+    LAPACKE_LIB := $(OPENBLAS_STATIC_ROOT)/lib/libopenblas.a
+    LAPACKE_DEF := -DUSE_GENERIC_LAPACKE
+    LAPACKE_STATIC_LIBS := $(OPENBLAS_STATIC_ROOT)/lib/libopenblas.a
+    $(info BLAS: static OpenBLAS at $(OPENBLAS_STATIC_ROOT) — will be embedded into libstiles)
+endif
+
+# Step 0b: Force the Accelerate framework (macOS only; skips every detection
+# step). Exists for the CI's Accelerate-vs-OpenBLAS diagnostic: Accelerate's
+# dgemm uses Apple's AMX matrix units, which OpenBLAS cannot reach, so this
+# measures whether the shipped macOS artifact leaves speed on the table.
+STILES_FORCE_ACCELERATE ?= 0
+ifeq ($(STILES_FORCE_ACCELERATE)$(PLATFORM),1macos)
+    BLAS_DETECTED := accelerate
+    USE_ARMPL := 0
+    LAPACKE_INC :=
+    LAPACKE_LIB := -framework Accelerate
+    LAPACKE_DEF := -DUSE_ACCELERATE -DACCELERATE_NEW_LAPACK
+    $(info BLAS: Accelerate framework FORCED (STILES_FORCE_ACCELERATE=1))
+endif
+
 # Step 1: ARM Performance Libraries (ARMPL) - macOS ARM64 FIRST
 # ARMPL is the fastest option on Apple Silicon Macs.
-# Skipped with USE_ARMPL=0 or USE_OPENBLAS=1.
-ifeq ($(PLATFORM),macos)
+# Skipped with USE_ARMPL=0 or USE_OPENBLAS=1 (and by the Step 0 overrides).
+ifeq ($(PLATFORM)$(BLAS_DETECTED),macosnone)
   ifeq ($(UNAME_M),arm64)
     ifneq ($(USE_ARMPL),0)
       ifneq ($(USE_OPENBLAS),1)

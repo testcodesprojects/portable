@@ -50,6 +50,15 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # Real bash for every step, ALSO inside containers: without this the
+    # runner may pick `sh` (bash in POSIX mode) there, where `source` of a
+    # missing file is a special-builtin failure that kills the shell DESPITE
+    # an `|| true` — that broke the arm64 smoke step (no MKL in that
+    # container). POSIX-mode sh would also reject `set -o pipefail` on
+    # some platforms.
+    defaults:
+      run:
+        shell: bash
     # Run the job inside matrix.container when set (empty => directly on the
     # runner). linux-x86_64 builds in manylinux_2_28 (glibc 2.28) so the .so
     # runs on essentially every x86-64 Linux since ~2018 (RHEL/Rocky 8+, Ubuntu
@@ -399,7 +408,9 @@ jobs:
       - name: Smoke test (speed + correctness)
         run: |
           set -o pipefail   # ./run.sh must still gate the job through the tee
-          if [ "${{ runner.os }}" = "Linux" ]; then source /opt/intel/oneapi/setvars.sh || true; fi
+          # Existence-guarded (NOT `source ... || true`): only the x86 lane has
+          # MKL; sourcing a missing file is fatal in POSIX-mode shells.
+          if [ -f /opt/intel/oneapi/setvars.sh ]; then source /opt/intel/oneapi/setvars.sh || true; fi
           if [ "${{ matrix.name }}" = "linux-arm64" ]; then
             export OPENBLAS_STATIC_ROOT="$PWD/local/openblas"   # bench.inc BLAS link
           fi
@@ -429,7 +440,7 @@ jobs:
       # oversubscribed: hosted runners have ~3-4 cores.
       - name: Parallel factorization test (concurrent chols)
         run: |
-          if [ "${{ runner.os }}" = "Linux" ]; then source /opt/intel/oneapi/setvars.sh || true; fi
+          if [ -f /opt/intel/oneapi/setvars.sh ]; then source /opt/intel/oneapi/setvars.sh || true; fi
           if [ "${{ matrix.name }}" = "linux-arm64" ]; then
             export OPENBLAS_STATIC_ROOT="$PWD/local/openblas"   # bench.inc BLAS link
           fi

@@ -30,15 +30,12 @@ For more information, please refer to <http://unlicense.org>
 
 // fluxsort 1.2.1.3 - Igor van den Hoven ivdhoven@gmail.com
 
-#if defined(__cplusplus)
-#define TMP_ __cplusplus
-#undef __cplusplus
+/* omp.h is included PLAINLY: the OpenMP spec requires it to be valid C++, and
+ * the old trick of #undef'ing __cplusplus around it breaks on clang 17+
+ * (Xcode 16.x): omp.h pulls the modular __stddef_wchar_t.h, which sees "not
+ * C++" and typedefs wchar_t — a collision with the C++ keyword the compiler
+ * still enforces. Caught by the macos-intel-x86_64 CI lane. */
 #include <omp.h>
-#define __cplusplus TMP_
-#undef TMP_
-#else
-#include <omp.h>
-#endif
 
 #define FLUX_OUT 96
 

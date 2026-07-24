@@ -43,7 +43,16 @@
     #ifndef ACCELERATE_NEW_LAPACK
         #error "USE_ACCELERATE requires ACCELERATE_NEW_LAPACK (macOS 13.3+ SDK) — make.inc defines both together"
     #endif
+    // sTiles defines a bare `DEBUG` macro (stiles_structs.hpp) for its own
+    // #ifdef DEBUG toggles. Apple's CarbonCore/Debugging.h — pulled in
+    // transitively by <Accelerate/Accelerate.h> — uses `#if DEBUG`, which an
+    // empty DEBUG turns into "expected value in expression". Hide our macro
+    // across the system include, then restore it (push/pop is a no-op if it
+    // was never defined, so this is safe regardless of include order).
+    #pragma push_macro("DEBUG")
+    #undef DEBUG
     #include <Accelerate/Accelerate.h>
+    #pragma pop_macro("DEBUG")
     #include "lapacke_accel_shim.hpp"
 
 #elif defined(USE_GENERIC_LAPACKE)

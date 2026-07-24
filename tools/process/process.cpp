@@ -151,14 +151,29 @@ extern "C" void stiles_env_validate(void);
 // small per-tile blocks. Runs once at library load. MKL builds skip this (their
 // embedded MKL is already sequential).
 #if !defined(STILES_WITH_MKL)
+#if defined(__APPLE__)
+#include <dlfcn.h>   // dlsym: Mach-O has no ELF-style undefined weak, see below
+#else
 extern "C" void openblas_set_num_threads(int) __attribute__((weak));
+#endif
 namespace {
 struct sTilesBlasSingleThreadInit {
     sTilesBlasSingleThreadInit() {
         // Fallback for BLAS libs that read the env but export no setter symbol
         // (respect an explicit user setting), then force it authoritatively.
         stiles_setenv("OPENBLAS_NUM_THREADS", "1", /*overwrite=*/0);
+#if defined(__APPLE__)
+        // An undefined weak extern links fine on ELF (resolves to null) but
+        // Mach-O still demands link-time resolution — and the Accelerate/ARMPL
+        // builds link no OpenBLAS at all, so the weak trick broke that link.
+        // Resolve at RUNTIME across every loaded image instead: same effect,
+        // pins OpenBLAS iff it is actually present in the process.
+        if (auto set_threads = reinterpret_cast<void (*)(int)>(
+                dlsym(RTLD_DEFAULT, "openblas_set_num_threads")))
+            set_threads(1);
+#else
         if (openblas_set_num_threads) openblas_set_num_threads(1);
+#endif
     }
 };
 static sTilesBlasSingleThreadInit s_blas_single_thread_init;

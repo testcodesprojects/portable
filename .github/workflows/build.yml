@@ -381,22 +381,6 @@ jobs:
           # dereference the symlink into a full duplicate of the dylib.
           rm -f dist/lib/libstiles.so
 
-      - name: Shrink the Intel-mac dylib (strip debug + local symbols)
-        if: runner.os == 'macOS' && matrix.arch == 'x86_64'
-        run: |
-          # macos-intel embeds a fat static OpenBLAS (every x86 DYNAMIC_ARCH
-          # kernel) and builds with -g, so it ships ~21 MB. `strip -x` drops
-          # local + debug symbols; the exported sTiles_* API is global, so it
-          # survives — the GATING smoke test below re-verifies the dylib still
-          # loads + factors. x86_64 macOS does not hard-require a valid code
-          # signature (unlike arm64 — which is why the arm dylib is left as-is),
-          # so this is low-risk; we ad-hoc re-sign anyway as belt-and-suspenders.
-          before=$(du -h dist/lib/libstiles.dylib | cut -f1)
-          strip -x dist/lib/libstiles.dylib
-          codesign -f -s - dist/lib/libstiles.dylib 2>/dev/null || true
-          after=$(du -h dist/lib/libstiles.dylib | cut -f1)
-          echo "strip: libstiles.dylib $before -> $after" | tee -a "$GITHUB_STEP_SUMMARY"
-
       - name: Sanity check the built library
         run: |
           ls -lh dist/lib/

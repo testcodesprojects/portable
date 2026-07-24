@@ -377,6 +377,9 @@ inline void gpu_disable_group(std::vector<TiledMatrix*>& group_schemes)
 #include "../tile/preprocess.hpp"
 #include "../free/free.hpp"
 #include "../sparse/api.hpp"
+#ifdef STILES_MFRONT
+#include "../mfront/api.hpp"
+#endif
 #include "../memory/cpuSmartTileMemoryManager.hpp"
 #include "../memory/memory_estimate.hpp"
 #include "../memory/memory_namespace.hpp"
@@ -1492,6 +1495,87 @@ static int preprocess_primary_sparse(sTiles_call*& call_info,
     // dispatch read param[3] and follow the resolved mode.
     int tile_type_mode = stiles_control_params[sTiles::param::TileTypeMode];
     bool symbolic_already_run = false;
+
+    // ── Cross-group structure reuse ───────────────────────────────────────
+    // INLA registers the SAME graph as several groups (per-eval, serial-
+    // phase, multi-rhs). The ordering competition and symbolic depend only
+    // on the graph, so adopt them from an earlier group instead of
+    // recomputing (~0.75s per extra group per fit). Identity is a content
+    // compare of the caller-owned COO arrays (graph_row/col_ref).
+    scheme->graph_row_ref = call_info->row_indices;
+    scheme->graph_col_ref = call_info->col_indices;
+    if (!force_nd) {
+        TiledMatrix* donor = nullptr;
+        for (int gi = 0; gi < global_index && !donor; ++gi) {
+            TiledMatrix* sc = stiles_schemes[gi];
+            if (sc && sc != scheme && sc->element_perm &&
+                sc->graph_row_ref && sc->graph_col_ref &&
+                sc->dim == scheme->dim && sc->nnz == scheme->nnz &&
+                std::memcmp(sc->graph_row_ref, call_info->row_indices,
+                            static_cast<std::size_t>(scheme->nnz) * sizeof(int)) == 0 &&
+                std::memcmp(sc->graph_col_ref, call_info->col_indices,
+                            static_cast<std::size_t>(scheme->nnz) * sizeof(int)) == 0) {
+                donor = sc;
+            }
+        }
+        // Tile-path donation: register the donor's permutation as this
+        // group's user permutation — symbolic_phase then skips the ordering
+        // competition and recomputes only the exact fill under that perm.
+        // Copies nothing beyond the permutation itself.
+        if (donor && !(donor->sparse_handle && donor->sparse_backend == 2 &&
+                       (tile_type_mode == 2 || tile_type_mode == 3))) {
+            sTiles::Logger::info("│ ↪ Reusing ordering from an identical earlier graph (user-perm donation)");
+            sTiles::set_user_permutation_internal(group_index, donor->element_perm, donor->dim);
+            donor = nullptr;   // fall through to the normal (competition-free) pipeline
+        }
+        if (donor) {
+            // donor is a mode-2 handle and this group can resolve to mode 2:
+            // clone the full structure (perm + pattern + symbolic + plans).
+            sTiles::Logger::info("│ ↪ Reusing ordering+symbolic from an identical earlier graph (mode 2)");
+            scheme->element_perm = OrderingMemoryManager::allocate<int>(scheme->dim, group_index);
+            std::memcpy(scheme->element_perm, donor->element_perm,
+                        static_cast<std::size_t>(scheme->dim) * sizeof(int));
+            // Callers query perm/iperm per group (sTiles_return_[i]perm_vec:
+            // the INLA bridge stores them for its remaps) and those getters
+            // are gated on use_ordering — leaving these unset would silently
+            // hand back an IDENTITY permutation for this group. Rebuild the
+            // inverse from the copied perm (no ownership sharing).
+            scheme->element_iperm = OrderingMemoryManager::allocate<int>(scheme->dim, group_index);
+            for (int i = 0; i < scheme->dim; ++i)
+                scheme->element_iperm[scheme->element_perm[i]] = i;
+            scheme->use_ordering = donor->use_ordering;
+            scheme->selected_ordering = donor->selected_ordering;
+            scheme->red_tree_separator_level = donor->red_tree_separator_level;
+            // Graph-derived scalars: keep public getters (sTiles_get_nnz_factor)
+            // and the tile-size-dependent solve caps truthful. The L pattern
+            // arrays and TileIndexer state stay with the donor (owned memory;
+            // every reachable reader is guarded on them being null/empty).
+            scheme->nnz_factor      = donor->nnz_factor;
+            scheme->tile_size       = donor->tile_size;
+            scheme->dimTiledMatrix  = donor->dimTiledMatrix;
+            scheme->triangular_size = donor->triangular_size;
+            stiles_control_params[sTiles::param::TileTypeMode] = 2;
+            if (g_symbolic_only) {
+                return EXIT_SUCCESS;
+            }
+            void* h = nullptr;
+            if (sTiles::sparse::api::create(&h, call_info->num_cores) != 0) {
+                sTiles::Logger::error("sTiles::sparse::api::create failed (donor clone).");
+                return EXIT_FAILURE;
+            }
+            sTiles::sparse::api::set_group_id(&h, group_index);
+            if (sTiles::sparse::api::clone_structure(&h, &donor->sparse_handle,
+                                                     call_info->row_indices, call_info->col_indices) != 0) {
+                sTiles::Logger::error("sTiles::sparse::api::clone_structure failed (donor clone).");
+                sTiles::sparse::api::freeGroup(&h);
+                return EXIT_FAILURE;
+            }
+            scheme->sparse_handle = h;
+            scheme->sparse_backend = 2;
+            return EXIT_SUCCESS;
+        }
+    }
+
     if (tile_type_mode == 3) {
         const double t0 = omp_get_wtime();
         if (force_nd) {
@@ -1704,8 +1788,65 @@ static int preprocess_primary_sparse(sTiles_call*& call_info,
             return EXIT_FAILURE;
         }
         scheme->sparse_handle = h;
+        scheme->sparse_backend = 2;
         return EXIT_SUCCESS;
     }
+
+#ifdef STILES_MFRONT
+    // ── Multifrontal path (mode 4) ────────────────────────────────────────
+    // Serial supernodal multifrontal backend (sTiles::mfront). User-selected
+    // only — auto-mode (3) never resolves here. Same handle plumbing as
+    // mode 2: sTiles' ordering supplies the permutation, then all numeric
+    // work routes through sparse_handle with sparse_backend == 4.
+    if (tile_type_mode == 4) {
+        sTiles::Logger::info("│ ↪ Routing to sTiles::mfront (variant=0, tile_type_mode=4)");
+
+        if (!symbolic_already_run) {
+            const double t0 = omp_get_wtime();
+            if (force_nd) {
+                if (sTiles::preprocess::symbolic_ND_phase(&call_info, &scheme, group_index, eff_cores) != sTiles::StatusCode::Success) {
+                    sTiles::Logger::error("Error: ND symbolic factorization failed (mfront module path).");
+                    return EXIT_FAILURE;
+                }
+            } else {
+                if (sTiles::preprocess::symbolic_phase(&call_info, &scheme, group_index, eff_cores) != sTiles::StatusCode::Success) {
+                    sTiles::Logger::error("Error: Symbolic factorization failed (mfront module path).");
+                    return EXIT_FAILURE;
+                }
+            }
+            sTiles::Logger::timing("│   ↪ Symbolic phase (for mfront module): ", (omp_get_wtime() - t0), " s");
+        }
+
+        if (g_symbolic_only) {
+            return EXIT_SUCCESS;
+        }
+
+        void* h = nullptr;
+        if (sTiles::mfront::api::create(&h, call_info->num_cores) != 0) {
+            sTiles::Logger::error("sTiles::mfront::api::create failed.");
+            return EXIT_FAILURE;
+        }
+        if (sTiles::mfront::api::set_user_permutation(&h, scheme->element_perm, scheme->dim) != 0) {
+            sTiles::Logger::error("sTiles::mfront::api::set_user_permutation failed.");
+            sTiles::mfront::api::freeGroup(&h);
+            return EXIT_FAILURE;
+        }
+        if (sTiles::mfront::api::assign_graph(&h, scheme->dim, scheme->nnz,
+                                        call_info->row_indices, call_info->col_indices) != 0) {
+            sTiles::Logger::error("sTiles::mfront::api::assign_graph failed.");
+            sTiles::mfront::api::freeGroup(&h);
+            return EXIT_FAILURE;
+        }
+        scheme->sparse_handle = h;
+        scheme->sparse_backend = 4;
+        return EXIT_SUCCESS;
+    }
+#else
+    if (tile_type_mode == 4) {
+        sTiles::Logger::error("tile_type_mode=4 requires a build with STILES_MFRONT=1.");
+        return EXIT_FAILURE;
+    }
+#endif
 
     // Symbolic phase (skipped if auto-mode resolution already ran it).
     if (!symbolic_already_run) {
@@ -2094,21 +2235,53 @@ static int preprocess_secondary_call(int call_index,
                 return EXIT_FAILURE;
             }
             sTiles::sparse::api::set_group_id(&h, group_index);
-            {
-                const int snode_cap = adaptive_snode_cap(call_info->tile_size, call_info->num_cores, primary_scheme->dim);
-                sTiles::sparse::api::set_max_supernode(&h, snode_cap);
+            // The structure is identical to the primary's — clone it instead
+            // of recomputing the symbolic (0.07s per call slot, x nt_outer).
+            if (primary_scheme->sparse_handle && primary_scheme->sparse_backend == 2 &&
+                sTiles::sparse::api::clone_structure(&h, &primary_scheme->sparse_handle,
+                                                     call_info->row_indices, call_info->col_indices) == 0) {
+                current_scheme->sparse_handle = h;
+                current_scheme->sparse_backend = 2;
+            } else {
+                {
+                    const int snode_cap = adaptive_snode_cap(call_info->tile_size, call_info->num_cores, primary_scheme->dim);
+                    sTiles::sparse::api::set_max_supernode(&h, snode_cap);
+                }
+                if (sTiles::sparse::api::set_user_permutation(&h, primary_scheme->element_perm, primary_scheme->dim) != 0) {
+                    sTiles::sparse::api::freeGroup(&h);
+                    return EXIT_FAILURE;
+                }
+                if (sTiles::sparse::api::assign_graph(&h, primary_scheme->dim, primary_scheme->nnz,
+                                                call_info->row_indices, call_info->col_indices) != 0) {
+                    sTiles::sparse::api::freeGroup(&h);
+                    return EXIT_FAILURE;
+                }
+                current_scheme->sparse_handle = h;
+                current_scheme->sparse_backend = 2;
             }
-            if (sTiles::sparse::api::set_user_permutation(&h, primary_scheme->element_perm, primary_scheme->dim) != 0) {
-                sTiles::sparse::api::freeGroup(&h);
+        }
+#ifdef STILES_MFRONT
+        else if (tile_type_mode == 4) {
+            // Multifrontal backend: each secondary gets its own per-call handle
+            // built from the same user permutation as the primary.
+            void* h = nullptr;
+            if (sTiles::mfront::api::create(&h, call_info->num_cores) != 0) {
+                sTiles::Logger::error("sTiles::mfront::api::create failed (secondary call).");
                 return EXIT_FAILURE;
             }
-            if (sTiles::sparse::api::assign_graph(&h, primary_scheme->dim, primary_scheme->nnz,
+            if (sTiles::mfront::api::set_user_permutation(&h, primary_scheme->element_perm, primary_scheme->dim) != 0) {
+                sTiles::mfront::api::freeGroup(&h);
+                return EXIT_FAILURE;
+            }
+            if (sTiles::mfront::api::assign_graph(&h, primary_scheme->dim, primary_scheme->nnz,
                                             call_info->row_indices, call_info->col_indices) != 0) {
-                sTiles::sparse::api::freeGroup(&h);
+                sTiles::mfront::api::freeGroup(&h);
                 return EXIT_FAILURE;
             }
             current_scheme->sparse_handle = h;
+            current_scheme->sparse_backend = 4;
         }
+#endif
     } else {
         // Dense variants (1 and 2): always use dense tiles
         if (sTiles::preprocess::allocate_dense_buffers_from_primary(primary_scheme, current_scheme, group_index, call_info->num_cores) != sTiles::StatusCode::Success)
@@ -2554,7 +2727,13 @@ int sTiles_assign_values(int group_index, int call_index, void **obj, double *x,
     {
         TiledMatrix* sp_scheme = s->schemes[global_index];
         if (sp_scheme && sp_scheme->sparse_handle) {
+#ifdef STILES_MFRONT
+            return (sp_scheme->sparse_backend == 4)
+                ? sTiles::mfront::api::assign_values(&sp_scheme->sparse_handle, x)
+                : sTiles::sparse::api::assign_values(&sp_scheme->sparse_handle, x);
+#else
             return sTiles::sparse::api::assign_values(&sp_scheme->sparse_handle, x);
+#endif
         }
     }
 
@@ -2771,7 +2950,13 @@ double sTiles_get_selinv_elm(int group_index, int call_index, int irow, int icol
     // Sparse-module dispatch — when sparse_handle is set, route element queries
     // to sTiles::sparse instead of the tile-storage accessors below.
     if (S && S->sparse_handle) {
+#ifdef STILES_MFRONT
+        return (S->sparse_backend == 4)
+            ? sTiles::mfront::api::get_selinv_elm(&S->sparse_handle, irow, icol)
+            : sTiles::sparse::api::get_selinv_elm(&S->sparse_handle, irow, icol);
+#else
         return sTiles::sparse::api::get_selinv_elm(&S->sparse_handle, irow, icol);
+#endif
     }
 
     if (!S) {
@@ -3026,7 +3211,13 @@ double sTiles_get_chol_elm(int group_index, int call_index, int irow, int icol, 
     // Sparse-module dispatch — when sparse_handle is set, route element queries
     // to sTiles::sparse instead of the tile-storage accessors below.
     if (S->sparse_handle) {
+#ifdef STILES_MFRONT
+        return (S->sparse_backend == 4)
+            ? sTiles::mfront::api::get_chol_elm(&S->sparse_handle, irow, icol)
+            : sTiles::sparse::api::get_chol_elm(&S->sparse_handle, irow, icol);
+#else
         return sTiles::sparse::api::get_chol_elm(&S->sparse_handle, irow, icol);
+#endif
     }
 
     // Check tile type mode
@@ -3340,7 +3531,13 @@ int sTiles_clear_selinv(int group_index, int call_index, void **obj) {
     // Z_cs is allocated lazily by selinv; zero its arena and drop the
     // selinved flag so the next get_selinv_elm forces a fresh selinv pass.
     if (scheme->sparse_handle) {
+#ifdef STILES_MFRONT
+        return (scheme->sparse_backend == 4)
+            ? sTiles::mfront::api::clear_selinv(&scheme->sparse_handle)
+            : sTiles::sparse::api::clear_selinv(&scheme->sparse_handle);
+#else
         return sTiles::sparse::api::clear_selinv(&scheme->sparse_handle);
+#endif
     }
 
     const int variant = scheme->factorization_variant;

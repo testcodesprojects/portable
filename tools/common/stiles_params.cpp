@@ -343,12 +343,13 @@ void sTiles_set_tile_ordering_min_dim(int value) {
 void sTiles_set_tile_type_mode(int value) {
     if (!expert_gate("sTiles_set_tile_type_mode")) return;
     // 0 = dense, 1 = semisparse, 2 = non-uniform tiles, 3 = auto (pick based
-    // on occupancy / fill / degree skew after symbolic factorization).
-    if (value == 0 || value == 1 || value == 2 || value == 3) {
+    // on occupancy / fill / degree skew after symbolic factorization),
+    // 4 = multifrontal (serial supernodal backend; never auto-selected).
+    if (value >= 0 && value <= 4) {
         set_param_both(sTiles::param::TileTypeMode, value);
     } else {
         sTiles::Logger::warning("sTiles_set_tile_type_mode: invalid value=", value,
-                                " (must be 0=dense, 1=semisparse, 2=non-uniform, or 3=auto)");
+                                " (must be 0=dense, 1=semisparse, 2=non-uniform, 3=auto, or 4=multifrontal)");
     }
 }
 

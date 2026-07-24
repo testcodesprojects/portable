@@ -46,10 +46,14 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>   // getenv/atoi for STILES_SPARSE_CSC_W
+#include <cstring>
 #include <new>
 #include <vector>
 
 #include <omp.h>
+#ifdef __linux__
+#include <sched.h>
+#endif
 
 namespace {
 
@@ -109,6 +113,11 @@ struct Handle {
     std::vector<Ptr> load_map;
     bool            load_map_built = false;
 
+    // load_map composed with coo_to_csc_pos: direct COO -> arena offsets, so
+    // the per-iteration assign touches each nonzero exactly once and skips the
+    // CSC value intermediate entirely. Same lifecycle as load_map.
+    std::vector<Ptr> coo_to_arena;
+
     // Symbolic factorization (etree + supernodes + row_pattern).
     Symbolic        sym;
 
@@ -120,6 +129,16 @@ struct Handle {
     SpsState        state;
     CollectedTasks  tasks;
     bool            tasks_collected = false;
+
+    // Serial task list for chols issued INSIDE an outer parallel region
+    // (INLA num.threads A:B with B>1). The multi-rank partition cannot run
+    // there: nested OMP collapses to one thread (cross-rank waits hang) and
+    // the std::thread fallback spawns spin-wait ranks per call against an
+    // oversubscribed machine (ferris 4:2 through INLA: 161s -> timeout).
+    // The N==1 emission is elimination order, so this path is bitwise
+    // identical to every other rank count. Built lazily on first use.
+    CollectedTasks  tasks_serial;
+    bool            tasks_serial_built = false;
 
     // Selinv parallel state (built lazily on first selinv call).
     sTiles::sparse::SelinvState           selinv_state;
@@ -140,6 +159,15 @@ struct Handle {
     sTiles::sparse::EtreeSchedule solve_schedule;
     bool            solve_schedule_built = false;
 
+    // Parallelism-aware solve rank count (set with the schedule). The
+    // level-scheduled solve pays one cross-rank sync per level, so on
+    // chain-like etrees (mean level width ~1, e.g. banded graphs) a
+    // multi-rank solve is pure synchronization overhead — measured 3.8x
+    // slower than serial standalone and catastrophic under INLA's
+    // intermittent call pattern (1:8 threads = 50x). Mirrors the chol's
+    // structural core cap.
+    int             solve_cores = 1;
+
     // Packed flat-CSC path for nrhs==1: auto-selected when supernodes are thin
     // (mean width small), where the supernodal cell-walk overhead dominates and
     // the flat scalar sweep wins. `packed_csc` is rebuilt whenever the factor
@@ -150,6 +178,20 @@ struct Handle {
 
 inline Handle* as_handle(void** obj) {
     return (obj && *obj) ? static_cast<Handle*>(*obj) : nullptr;
+}
+
+// True when the calling thread cannot host a multi-rank team: either it is
+// inside an outer parallel region, or its CPU affinity mask (INLA pins its
+// worker threads to single cores) spans fewer than 2 CPUs — spawned ranks
+// inherit the mask and timeshare one core, spin-waits included (measured:
+// ferris 2-rank chol 1.0s vs 0.05s serial on a pinned caller).
+inline bool caller_cannot_parallelize() {
+    if (omp_in_parallel()) return true;
+#ifdef __linux__
+    cpu_set_t cs;
+    if (sched_getaffinity(0, sizeof(cs), &cs) == 0 && CPU_COUNT(&cs) < 2) return true;
+#endif
+    return false;
 }
 
 constexpr int kErrNullHandle = -1;
@@ -306,6 +348,61 @@ void set_group_id(void** obj, int group_id) {
 // Symbolic + numeric phases
 // -----------------------------------------------------------------------------
 
+namespace {
+// Task-partition rank clamp shared by assign_graph and clone_structure:
+// require enough work per rank (see assign_graph notes).
+void clamp_ranks(Handle* h) {
+    long long per_rank = 200000;
+    if (const char* e = std::getenv("STILES_SPARSE_NNZ_PER_RANK")) {
+        const long long v = std::atoll(e);
+        if (v > 0) per_rank = v;
+    }
+    const long long nnzL = static_cast<long long>(h->sym.nnz_l);
+    int cap = static_cast<int>(std::min(nnzL / per_rank,
+                                        static_cast<long long>(h->sym.n_super / 4)));
+    if (cap < 1) cap = 1;
+    if (h->num_cores > cap) {
+        sTiles::Logger::timing("│   ↪ Sparse ranks clamped ", h->num_cores, " → ", cap,
+                               " (nnz(L)=", nnzL, ", supernodes=", h->sym.n_super, ")");
+        h->num_cores = cap;
+    }
+}
+} // namespace
+
+int clone_structure(void** dst_obj, void** src_obj, const int* row, const int* col) {
+    Handle* d = as_handle(dst_obj);
+    Handle* s = as_handle(src_obj);
+    if (!d || !s)       return kErrNullHandle;
+    if (!s->have_graph) return kErrInvalidArg;
+
+    d->n         = s->n;
+    d->ordering  = s->ordering;
+    d->have_perm = true;
+
+    // Pattern + scatter plans are pure structure. CellStore::allocate is
+    // deterministic in `sym`, so the source's arena offsets stay valid.
+    d->A_lower        = s->A_lower;
+    d->coo_to_csc_pos = s->coo_to_csc_pos;
+    d->coo_row        = row;
+    d->coo_col        = col;
+    d->coo_nnz        = s->coo_nnz;
+    d->sym            = s->sym;
+    d->load_map       = s->load_map;
+    d->coo_to_arena   = s->coo_to_arena;
+    d->load_map_built = s->load_map_built;
+
+    d->L_cs.allocate(d->sym, d->group_id);
+
+    clamp_ranks(d);
+    sTiles::sparse::collect_tasks(d->sym, d->L_cs, d->num_cores, d->tasks);
+    d->tasks_collected    = true;
+    d->tasks_serial_built = false;
+
+    d->nnz_input  = s->nnz_input;
+    d->have_graph = true;
+    return 0;
+}
+
 int assign_graph(void** obj, int n, int nnz,
                  const int* row, const int* col) {
     Handle* h = as_handle(obj);
@@ -326,6 +423,7 @@ int assign_graph(void** obj, int n, int nnz,
     // Structure is being (re)built -> any cached CSC->arena scatter plan is stale.
     h->load_map_built = false;
     h->load_map.clear();
+    h->coo_to_arena.clear();
 
     const double t_coo = omp_get_wtime();
     // Build pattern-only CSC and record per-COO target positions.
@@ -357,26 +455,12 @@ int assign_graph(void** obj, int n, int nnz,
     // factor took ~1.5 s per chol at 8 ranks vs ~0.01 s serial). Require
     // enough work per rank: >= STILES_SPARSE_NNZ_PER_RANK nnz(L) (default
     // 200k) and >= 4 supernodes per rank; big factors keep the full width.
-    {
-        long long per_rank = 200000;
-        if (const char* e = std::getenv("STILES_SPARSE_NNZ_PER_RANK")) {
-            const long long v = std::atoll(e);
-            if (v > 0) per_rank = v;
-        }
-        const long long nnzL = static_cast<long long>(h->sym.nnz_l);
-        int cap = static_cast<int>(std::min(nnzL / per_rank,
-                                            static_cast<long long>(h->sym.n_super / 4)));
-        if (cap < 1) cap = 1;
-        if (h->num_cores > cap) {
-            sTiles::Logger::timing("│   ↪ Sparse ranks clamped ", h->num_cores, " → ", cap,
-                                   " (nnz(L)=", nnzL, ", supernodes=", h->sym.n_super, ")");
-            h->num_cores = cap;
-        }
-    }
+    clamp_ranks(h);
 
     const double t_tasks = omp_get_wtime();
     sTiles::sparse::collect_tasks(h->sym, h->L_cs, h->num_cores, h->tasks);
     h->tasks_collected = true;
+    h->tasks_serial_built = false;
     sTiles::Logger::timing("│   ↪ Collect numeric tasks: ", (omp_get_wtime() - t_tasks), " s");
 
     h->nnz_input  = static_cast<Int>(nnz);
@@ -391,31 +475,52 @@ int assign_values(void** obj, const double* values) {
     if (!h->have_graph) return kErrInvalidArg;
 
     const double t_assign = omp_get_wtime();
-    // Splat values into A_lower.nzval using the per-COO position map built
-    // at assign_graph. Entries that were dropped (strict-upper or out-of-
-    // range) have pos == -1; we ignore them.
-    const Ptr total = static_cast<Ptr>(h->A_lower.rowind.size());
-    h->A_lower.nzval.assign(static_cast<std::size_t>(total), 0.0);
-    for (int k = 0; k < h->coo_nnz; ++k) {
-        const Ptr p = h->coo_to_csc_pos[static_cast<std::size_t>(k)];
-        if (p >= 0) h->A_lower.nzval[static_cast<std::size_t>(p)] = values[k];
-    }
-
-    // Zero the existing arena instead of re-allocating — the cell layout
-    // built at assign_graph is still valid, only nzval needs to be reset.
     if (h->L_cs.arena_size() > 0 && h->L_cs.arena_data() != nullptr) {
-        std::fill_n(h->L_cs.arena_data(), h->L_cs.arena_size(), 0.0);
-        // Cached CSC->arena scatter: build the destination plan once (the
-        // geometry never changes across re-factorizations), then splat. This
-        // replaces load_from_csc()'s per-entry invp/supernode/find/lower_bound
-        // work with a single indexed store per nonzero.
         if (!h->load_map_built) {
             h->L_cs.build_load_map(h->A_lower, h->sym, h->load_map);
+            // Compose COO->CSC->arena into one direct plan; dropped entries
+            // (strict-upper or out-of-range, pos == -1) stay -1.
+            h->coo_to_arena.assign(static_cast<std::size_t>(h->coo_nnz), static_cast<Ptr>(-1));
+            for (int k = 0; k < h->coo_nnz; ++k) {
+                const Ptr p = h->coo_to_csc_pos[static_cast<std::size_t>(k)];
+                if (p >= 0) h->coo_to_arena[static_cast<std::size_t>(k)] = h->load_map[static_cast<std::size_t>(p)];
+            }
             h->load_map_built = true;
         }
-        h->L_cs.load_from_csc_mapped(h->A_lower, h->load_map);
+        // Zero the arena (the cell layout from assign_graph is still valid)
+        // and scatter straight from the user's COO values — one indexed store
+        // per nonzero, no CSC value intermediate. This is the per-iteration
+        // hot path in outer optimizer loops (INLA calls it every theta
+        // evaluation), so both passes run parallel when it pays.
+        double*   base  = h->L_cs.arena_data();
+        const Ptr asize = h->L_cs.arena_size();
+        const bool par  = h->num_cores > 1 && asize > 65536 && !caller_cannot_parallelize();
+        if (par) {
+            #pragma omp parallel num_threads(h->num_cores)
+            {
+                #pragma omp for schedule(static)
+                for (Ptr i = 0; i < asize; ++i) base[i] = 0.0;
+                #pragma omp for schedule(static)
+                for (int k = 0; k < h->coo_nnz; ++k) {
+                    const Ptr d = h->coo_to_arena[static_cast<std::size_t>(k)];
+                    if (d >= 0) base[static_cast<std::size_t>(d)] = values[k];
+                }
+            }
+        } else {
+            std::fill_n(base, static_cast<std::size_t>(asize), 0.0);
+            for (int k = 0; k < h->coo_nnz; ++k) {
+                const Ptr d = h->coo_to_arena[static_cast<std::size_t>(k)];
+                if (d >= 0) base[static_cast<std::size_t>(d)] = values[k];
+            }
+        }
     } else {
-        // Degenerate/empty arena — fall back to the direct path.
+        // Degenerate/empty arena — fall back to the CSC path.
+        const Ptr total = static_cast<Ptr>(h->A_lower.rowind.size());
+        h->A_lower.nzval.assign(static_cast<std::size_t>(total), 0.0);
+        for (int k = 0; k < h->coo_nnz; ++k) {
+            const Ptr p = h->coo_to_csc_pos[static_cast<std::size_t>(k)];
+            if (p >= 0) h->A_lower.nzval[static_cast<std::size_t>(p)] = values[k];
+        }
         h->L_cs.load_from_csc(h->A_lower, h->sym);
     }
     (void)t_assign;
@@ -431,13 +536,53 @@ int chol_common(Handle* h, bool use_omp) {
     if (!h)             return kErrNullHandle;
     if (!h->have_vals)  return kErrInvalidArg;
 
-    // Wire executor state pointers and (re)set per-call counters.
+    // Wire executor state pointers and (re)set per-call counters. Inside an
+    // outer parallel region, swap in the serial task list (see Handle docs).
+    CollectedTasks* tl = &h->tasks;
+    // Pinned/nested callers cannot host an OMP team (it inherits the 1-CPU
+    // mask), but the pthreads runner's ranks unbind to the LOAD-TIME mask —
+    // INLA leaves most cores unpinned and idle. STILES_NESTED_CHOL_PAR=1
+    // routes such chols there instead of the serial list (same owner-pull
+    // tasks, so bitwise-identical either way).
+    // Default ON for small teams (a 2-4 rank chol on the idle unpinned cores
+    // is a measured ~14% eval-chain win at INLA 4:2); OFF for larger teams,
+    // whose spin-wait ranks could oversubscribe the free cores.
+    // STILES_NESTED_CHOL_PAR=0/1 forces either way.
+    static const int nested_chol_par_env = []() {
+        const char* e = std::getenv("STILES_NESTED_CHOL_PAR");
+        return e ? (std::atoi(e) != 0 ? 1 : 0) : -1;
+    }();
+    const int n_ranks_req = static_cast<int>(h->tasks.offsets.size()) - 1;
+    const bool nested_chol_par =
+        (nested_chol_par_env >= 0) ? (nested_chol_par_env == 1) : (n_ranks_req <= 4);
+    bool force_pthreads = false;
+    if (std::getenv("STILES_CHOL_CTX") && h->tasks.offsets.size() > 2) {
+        cpu_set_t cs; int ncpu = -1;
+        if (sched_getaffinity(0, sizeof(cs), &cs) == 0) ncpu = CPU_COUNT(&cs);
+        std::fprintf(stderr, "[chol-ctx] group=%d ranks=%d in_par=%d level=%d act_lvl=%d max_lvl=%d aff=%d omp_max=%d\n",
+            h->group_id, (int)h->tasks.offsets.size()-1, (int)omp_in_parallel(),
+            omp_get_level(), omp_get_active_level(), omp_get_max_active_levels(),
+            ncpu, omp_get_max_threads());
+    }
+    if (caller_cannot_parallelize() && h->tasks.offsets.size() > 2) {
+        if (nested_chol_par) {
+            force_pthreads = true;
+        } else {
+            if (!h->tasks_serial_built) {
+                sTiles::sparse::collect_tasks(h->sym, h->L_cs, 1, h->tasks_serial);
+                h->tasks_serial_built = true;
+            }
+            tl = &h->tasks_serial;
+        }
+    }
     h->state.symbolic = &h->sym;
     h->state.cells    = &h->L_cs;
-    h->state.tasks    = &h->tasks;
+    h->state.tasks    = tl;
 
     sTiles::sparse::prepare(h->state);
-    if (use_omp) {
+    if (force_pthreads) {
+        sTiles::sparse::factorize_run_parallel_pthreads(h->state);
+    } else if (use_omp) {
         sTiles::sparse::factorize_run_parallel_omp(h->state);
     } else {
         sTiles::sparse::factorize_run_parallel_pthreads(h->state);
@@ -456,6 +601,37 @@ int chol_common(Handle* h, bool use_omp) {
 int chol_pthreads(void** obj) { return chol_common(as_handle(obj), false); }
 int chol_omp     (void** obj) { return chol_common(as_handle(obj), true);  }
 
+// Lazily build the per-symbolic solve caches (ColIndex + EtreeSchedule).
+// Idempotent: once built, both are reused across all subsequent solves
+// until the symbolic pattern changes.
+static inline void ensure_solve_cache(Handle* h) {
+    if (!h->solve_col_index_built) {
+        h->solve_col_index = sTiles::sparse::build_col_index(h->sym, h->L_cs);
+        h->solve_col_index_built = true;
+    }
+    if (!h->solve_schedule_built) {
+        h->solve_schedule = sTiles::sparse::build_etree_schedule(h->sym);
+        h->solve_schedule_built = true;
+        // Grant parallel solve only when the average level offers enough
+        // independent supernodes to feed the ranks. STILES_SPARSE_SOLVE_WIDTH
+        // overrides the per-rank width requirement (0 = always parallel).
+        double req = 4.0;
+        if (const char* e = std::getenv("STILES_SPARSE_SOLVE_WIDTH")) req = std::atof(e);
+        const double mean_w = (h->solve_schedule.num_levels > 0)
+            ? static_cast<double>(h->sym.n_super) / static_cast<double>(h->solve_schedule.num_levels)
+            : 1.0;
+        h->solve_cores = (req > 0.0 && mean_w < req * h->num_cores) ? 1 : h->num_cores;
+        if (std::getenv("STILES_SPARSE_SOLVE_LOG")) {
+            std::fprintf(stderr,
+                "[sparse/solve-gate] n_super=%lld levels=%lld mean_w=%.2f cores %d -> %d\n",
+                static_cast<long long>(h->sym.n_super),
+                static_cast<long long>(h->solve_schedule.num_levels),
+                mean_w, h->num_cores, h->solve_cores);
+        }
+    }
+}
+
+
 namespace {
 int selinv_common(Handle* h, bool use_omp) {
     if (!h)            return kErrNullHandle;
@@ -465,8 +641,16 @@ int selinv_common(Handle* h, bool use_omp) {
     h->Z_cs.allocate_like(h->L_cs, h->group_id);
 
     // Collect parallel selinv tasks (one-shot for this call: dependencies
-    // and the M arena are call-local).
-    sTiles::sparse::collect_selinv_tasks(h->sym, h->Z_cs, h->num_cores,
+    // and the M arena are call-local). Rank count goes through the same
+    // structural gate as the solves — selinv's per-column level scheduling
+    // degenerates on chain-like etrees exactly like the solve (lgm: 2.9s at
+    // 8 ranks vs 0.47s serial).
+    ensure_solve_cache(h);
+    // Inside an active outer parallel region a nested team is 1 thread —
+    // run serial outright and skip the per-level region-entry overhead
+    // (ferris 4:2 through INLA measured 161s from exactly this).
+    const int selinv_ranks = caller_cannot_parallelize() ? 1 : h->solve_cores;
+    sTiles::sparse::collect_selinv_tasks(h->sym, h->Z_cs, selinv_ranks,
                                          h->selinv_tasks);
     h->selinv_tasks_collected = true;
 
@@ -499,20 +683,6 @@ int selinv_common(Handle* h, bool use_omp) {
 
 int selinv_pthreads(void** obj) { return selinv_common(as_handle(obj), false); }
 int selinv_omp     (void** obj) { return selinv_common(as_handle(obj), true);  }
-
-// Lazily build the per-symbolic solve caches (ColIndex + EtreeSchedule).
-// Idempotent: once built, both are reused across all subsequent solves
-// until the symbolic pattern changes.
-static inline void ensure_solve_cache(Handle* h) {
-    if (!h->solve_col_index_built) {
-        h->solve_col_index = sTiles::sparse::build_col_index(h->sym, h->L_cs);
-        h->solve_col_index_built = true;
-    }
-    if (!h->solve_schedule_built) {
-        h->solve_schedule = sTiles::sparse::build_etree_schedule(h->sym);
-        h->solve_schedule_built = true;
-    }
-}
 
 // Route the sparse solve through the packed flat-CSC path when the factor is
 // thin (mean supernode width ≤ gate) and 1 ≤ nrhs ≤ cap. solve_type: 0=forward,
@@ -564,10 +734,10 @@ static bool packed_solve_if_eligible(Handle* h, double* b, int nrhs, int ldb,
             const char* e = std::getenv("STILES_SPARSE_CSC_PAR");
             return e && std::atoi(e) != 0;
         }();
-        if (csc_par && h->num_cores > 1)
+        if (csc_par && h->solve_cores > 1)
             sTiles::sparse::solve_packed_par(h->sym, h->packed_csc, h->solve_schedule,
                                              h->solve_scratch, b, static_cast<int64_t>(ldb),
-                                             h->num_cores, solve_type);
+                                             h->solve_cores, solve_type);
         else
             sTiles::sparse::solve_packed(h->sym, h->packed_csc, h->solve_scratch,
                                          b, static_cast<int64_t>(ldb), solve_type);
@@ -584,7 +754,8 @@ int solve_LLT(void** obj, double* b, int nrhs, int ldb, int tile_size) {
     if (packed_solve_if_eligible(h, b, nrhs, ldb, tile_size, 2)) return 0;
     sTiles::sparse::solve(h->sym, h->L_cs, h->solve_col_index,
                           h->solve_schedule, h->solve_scratch,
-                          b, nrhs, static_cast<int64_t>(ldb), h->num_cores);
+                          b, nrhs, static_cast<int64_t>(ldb),
+                          caller_cannot_parallelize() ? 1 : h->solve_cores);
     return 0;
 }
 
@@ -597,7 +768,8 @@ int solve_L(void** obj, double* b, int nrhs, int ldb, int tile_size) {
     if (packed_solve_if_eligible(h, b, nrhs, ldb, tile_size, 0)) return 0;
     sTiles::sparse::solve_forward(h->sym, h->L_cs, h->solve_col_index,
                                   h->solve_schedule, h->solve_scratch,
-                                  b, nrhs, static_cast<int64_t>(ldb), h->num_cores);
+                                  b, nrhs, static_cast<int64_t>(ldb),
+                          caller_cannot_parallelize() ? 1 : h->solve_cores);
     return 0;
 }
 
@@ -610,7 +782,8 @@ int solve_LT(void** obj, double* b, int nrhs, int ldb, int tile_size) {
     if (packed_solve_if_eligible(h, b, nrhs, ldb, tile_size, 1)) return 0;
     sTiles::sparse::solve_backward(h->sym, h->L_cs, h->solve_col_index,
                                    h->solve_schedule, h->solve_scratch,
-                                   b, nrhs, static_cast<int64_t>(ldb), h->num_cores);
+                                   b, nrhs, static_cast<int64_t>(ldb),
+                          caller_cannot_parallelize() ? 1 : h->solve_cores);
     return 0;
 }
 

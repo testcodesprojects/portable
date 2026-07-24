@@ -93,20 +93,6 @@ ColumnIndex build_column_index(const Symbolic& s, const CellStore& cs) {
     return ci;
 }
 
-// Estimate the total flops of supernode I's task group (FACTOR + TRSMs +
-// UPDATEs). Used for LPT load balancing; only ratios matter.
-double supernode_flops(const Symbolic& s, const ColumnIndex&, Int I) {
-    Int width_I = s.supernode_first_col[I] - s.supernode_first_col[I - 1];
-    // col_count[supernode_first_col[I-1]-1] is the length of I's row pattern including the diag
-    // block; subtracting width_I gives the total off-diagonal row count.
-    Int len = s.col_count[s.supernode_first_col[I - 1] - 1];
-    Int off = std::max<Int>(0, len - width_I);
-    double f = (double)width_I * width_I * width_I / 3.0;   // FACTOR
-    f += (double)width_I * width_I * off;                   // TRSMs
-    f += (double)off * off * width_I;                       // UPDATEs (rough)
-    return f;
-}
-
 // One-time single-core BLAS-3 flop-rate calibration (cached, thread-safe). Times a
 // small dense DGEMM through the SAME backend the factorization uses, so the rate is
 // in the same flop units as supernode_flops(). The work-floor's per-rank threshold
@@ -180,6 +166,102 @@ void emit_supernode_tasks(Int                       I,
     }
 }
 
+// One UPDATE into a cell of target supernode J, recorded at collection time.
+// Incoming lists are built with the source loop ascending, so each target's
+// list is automatically in ascending source order — the SAME per-cell
+// accumulation order as the serial (N==1) elimination-order emission. That
+// makes the parallel factor bitwise-identical to the serial one.
+struct IncomingUpdate {
+    uint32_t src_I;
+    uint32_t K;
+    uint32_t cell_a;   // (K, I)
+    uint32_t cell_b;   // (J, I)
+    uint32_t cell_c;   // (K, J) destination
+};
+
+// Owner-attributed work model: each target supernode J owns its FACTOR,
+// TRSMs, AND every UPDATE into its cells (owner-pull). Fills `incoming[J]`
+// (source-major, ascending) and `own_flops[J]` (FACTOR + TRSM +
+// incoming-update flops) in one pass.
+void build_incoming(const Symbolic&                            s,
+                    const ColumnIndex&                         ci,
+                    const CellStore&                           cs,
+                    std::vector<std::vector<IncomingUpdate>>&  incoming,
+                    std::vector<double>&                       own_flops) {
+    incoming.assign(s.n_super + 1, {});
+    own_flops.assign(s.n_super + 1, 0.0);
+    for (Int I = 1; I <= s.n_super; ++I) {
+        const Int width_I = s.supernode_first_col[I] - s.supernode_first_col[I - 1];
+        const Int len     = s.col_count[s.supernode_first_col[I - 1] - 1];
+        const Int off_r   = std::max<Int>(0, len - width_I);
+        own_flops[I] += (double)width_I * width_I * width_I / 3.0   // FACTOR
+                      + (double)width_I * width_I * off_r;          // TRSMs
+        const auto& off = ci.off_diag[I];
+        for (size_t a = 0; a < off.size(); ++a) {
+            for (size_t b = a; b < off.size(); ++b) {
+                const Int J = off[a].first;
+                const Int K = off[b].first;
+                IncomingUpdate u{};
+                u.src_I  = static_cast<uint32_t>(I);
+                u.K      = static_cast<uint32_t>(K);
+                u.cell_a = off[b].second;
+                u.cell_b = off[a].second;
+                u.cell_c = require_cell_idx(cs, K, J, "UPDATE dest cell (K,J)");
+                incoming[static_cast<size_t>(J)].push_back(u);
+                own_flops[static_cast<size_t>(J)] +=
+                    2.0 * (double)cs.at(u.cell_a).rows * (double)cs.at(u.cell_b).rows * (double)width_I;
+            }
+        }
+    }
+}
+
+// Emit supernode J's owner group: incoming UPDATEs (source-major, ascending),
+// then FACTOR, then TRSMs. All writes into J's cells happen on J's rank in
+// program order — no cross-rank scatter races, fixed per-cell accumulation
+// order regardless of thread count, and each source panel is reused across
+// all its destinations in J while hot.
+// NOTE (2026-07): a per-cell-train split of these groups was tried to recover
+// cross-train GEMM parallelism (ferris 8t 0.026->0.022s) but cost bordered
+// matrices ~1.8x (bern_spd 8t 0.27->0.50s) and a fused/split hybrid was worse
+// than both; the fused source-major shape below dominated overall.
+// Emit supernode J's FACTOR + TRSMs (its update trains are emitted as
+// separate units).
+void emit_owner_group(Int                                J,
+                      const ColumnIndex&                 ci,
+                      const std::vector<IncomingUpdate>& in_J,
+                      std::vector<SpsTask>&              out_tasks,
+                      std::vector<int>&                  out_target_count) {
+    for (const IncomingUpdate& u : in_J) {
+        SpsTask t{};
+        t.op     = TaskOp::UPDATE;
+        t.I      = u.src_I;
+        t.J      = static_cast<uint32_t>(J);
+        t.K      = u.K;
+        t.cell_a = u.cell_a;
+        t.cell_b = u.cell_b;
+        t.cell_c = u.cell_c;
+        out_tasks.push_back(t);
+        out_target_count[t.cell_c]++;
+    }
+
+    const uint32_t cell_JJ = ci.diag_cell[J];
+    SpsTask t{};
+    t.op     = TaskOp::FACTOR;
+    t.I      = static_cast<uint32_t>(J);
+    t.cell_a = cell_JJ;
+    out_tasks.push_back(t);
+
+    for (const auto& od : ci.off_diag[J]) {
+        SpsTask u{};
+        u.op     = TaskOp::TRSM;
+        u.I      = static_cast<uint32_t>(J);
+        u.J      = static_cast<uint32_t>(od.first);
+        u.cell_a = cell_JJ;
+        u.cell_b = od.second;
+        out_tasks.push_back(u);
+    }
+}
+
 // Compute supernodal-etree level (leaf = 0, root = max). Children always
 // appear before their parent in 1..n_super by post-order, so a single
 // linear pass suffices.
@@ -218,7 +300,16 @@ void collect_tasks(const Symbolic&  s,
         return;
     }
 
-    // Multi-thread: level-set distribution.
+    // Multi-thread: per-cell owner emission. Every UPDATE into a destination
+    // cell runs on that cell's rank, in ascending source order — the same
+    // per-cell accumulation order as the serial path above, so the factor is
+    // bitwise-identical for every rank count (the historical push model
+    // applied updates in spinlock-acquisition order, i.e. run-to-run
+    // nondeterministic). Trains for different cells parallelize freely.
+    std::vector<std::vector<IncomingUpdate>> incoming;
+    std::vector<double>                      own_flops;
+    build_incoming(s, ci, cs, incoming, own_flops);
+
     // 1. Compute supernodal level (leaf = 0).
     std::vector<Int> level = compute_levels(s);
 
@@ -249,7 +340,7 @@ void collect_tasks(const Symbolic&  s,
                 double lt = 0.0, lm = 0.0;
                 Int    lm_len = 1;                 // front size of the heaviest supernode
                 for (Int I : by_level[L]) {
-                    double f = supernode_flops(s, ci, I);
+                    double f = own_flops[static_cast<size_t>(I)];
                     lt += f;
                     if (f > lm) { lm = f; lm_len = s.col_count[s.supernode_first_col[I - 1] - 1]; }
                 }
@@ -309,36 +400,39 @@ void collect_tasks(const Symbolic&  s,
         }
     }
 
-    // 3. Per-rank task buckets, built in level order. Within each level we
-    //    sort supernodes by descending flop cost and assign each to the
-    //    least-loaded rank (LPT — Longest Processing Time first heuristic).
-    std::vector<std::vector<SpsTask>> rank_tasks(N);
-    std::vector<double>               rank_load(N, 0.0);
+    // 3. Assign supernodes to ranks: within each level, sort by descending
+    //    owner flops and give each to the least-loaded rank (LPT heuristic).
+    std::vector<std::vector<Int>> rank_sns(N);
+    std::vector<double>           rank_load(N, 0.0);
 
     for (Int L = 0; L <= max_level; ++L) {
         auto& sns = by_level[L];
         std::sort(sns.begin(), sns.end(),
                   [&](Int a, Int b) {
-                    return supernode_flops(s, ci, a) > supernode_flops(s, ci, b);
+                    return own_flops[static_cast<size_t>(a)] > own_flops[static_cast<size_t>(b)];
                   });
         for (Int I : sns) {
             int min_r = 0;
             for (int r = 1; r < N; ++r)
                 if (rank_load[r] < rank_load[min_r]) min_r = r;
-            double f = supernode_flops(s, ci, I);
-            rank_load[min_r] += f;
-            // Append this supernode's tasks to rank min_r's bucket.
-            emit_supernode_tasks(I, ci, cs,
-                                 rank_tasks[min_r], out.update_target_count);
+            rank_load[min_r] += own_flops[static_cast<size_t>(I)];
+            rank_sns[min_r].push_back(I);
         }
     }
 
-    // 4. Concatenate per-rank buckets into the global task array.
+    // 4. Emit each rank's groups in ascending supernode index. Supernode
+    //    numbering is an etree postorder (children before parents), so this
+    //    is both a topological order (each blocked rank waits only on
+    //    strictly earlier groups -> no cross-rank deadlock) and the
+    //    cache-friendly child-before-parent visit order.
     out.offsets.assign(N + 1, 0);
     for (int r = 0; r < N; ++r) {
         out.offsets[r] = static_cast<int>(out.tasks.size());
-        out.tasks.insert(out.tasks.end(),
-                         rank_tasks[r].begin(), rank_tasks[r].end());
+        std::sort(rank_sns[r].begin(), rank_sns[r].end());
+        for (Int J : rank_sns[r]) {
+            emit_owner_group(J, ci, incoming[static_cast<size_t>(J)],
+                             out.tasks, out.update_target_count);
+        }
     }
     out.offsets[N] = static_cast<int>(out.tasks.size());
 }

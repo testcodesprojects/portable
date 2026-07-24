@@ -443,13 +443,25 @@ typedef struct TiledMatrix {
     sTiles::gpu::DispatchPlan gpu_dispatch_plan;
 #endif
 
-    /**< Opaque handle for the non-uniform tile path (sTiles::sparse). Cells
-     *   have variable rows×cols driven by the elimination tree (column width
-     *   = supernode width, row count = row-supernode run length); each cell
-     *   is dense, no within-cell sparsity bitmap.
-     *   Set when factorization_variant==0 && tile_type_mode==2; nullptr otherwise.
-     *   Owned by the scheme; freed via sTiles::sparse::api::freeGroup in destroy_tiled_matrix. */
+    /**< Opaque handle for the sparse-backend paths. Mode 2 (sTiles::sparse):
+     *   non-uniform cells with variable rows×cols driven by the elimination
+     *   tree. Mode 4 (sTiles::mfront): supernodal multifrontal factor.
+     *   Set when factorization_variant==0 && tile_type_mode is 2 or 4;
+     *   nullptr otherwise. Owned by the scheme; freed in destroy_tiled_matrix
+     *   via the api::freeGroup of the backend named by sparse_backend. */
     void* sparse_handle = nullptr;
+
+    /**< Which backend owns sparse_handle: 2 = sTiles::sparse (non-uniform
+     *   tiles), 4 = sTiles::mfront (multifrontal). Meaningless while
+     *   sparse_handle is null. */
+    int sparse_backend = 2;
+
+    /**< Caller-owned COO pointers of the graph this scheme was built from
+     *   (set at primary preprocessing for sparse variants). Identity checks
+     *   only — lets a later group with byte-identical COO adopt this
+     *   scheme's ordering/symbolic instead of recomputing it. */
+    const int* graph_row_ref = nullptr;
+    const int* graph_col_ref = nullptr;
 
     //dense tiles
     sTiles::DenseTile *denseTiles;                       
@@ -544,6 +556,19 @@ typedef struct TiledMatrix {
     int *tile_index_lookup;
     int *withinTileRow;
     int *withinTileCol;
+
+    /**< Direct semisparse scatter plan: chunk offset per COO entry (-1 =
+     *   dropped). The offsets are pure tile structure, so the banded/acol
+     *   branch math runs once (first update_x_semisparse_tiles call), not on
+     *   every assign_values. Manually released in destroy_tiled_matrix —
+     *   the scheme's destructor never runs (placement-new on calloc'd
+     *   memory). */
+    std::vector<int> semisparse_offset_lookup;
+#ifdef SPARSE_STILES
+    /**< Same plan into SparseTileCSC values (replaces the per-entry column
+     *   search that ran on every assign_values). */
+    std::vector<int> sparse_csc_offset_lookup;
+#endif
 
     sTiles::Workspace** workspaces;
     int num_workspaces;  // Number of allocated workspace slots

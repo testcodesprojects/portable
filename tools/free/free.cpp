@@ -16,6 +16,9 @@
 #include "../TileIndexer/TileIndexer.hpp"
 #include "../TileIndexer/TileIndexerMapper.hpp"
 #include "../sparse/api.hpp"
+#ifdef STILES_MFRONT
+#include "../mfront/api.hpp"
+#endif
 
 #ifdef STILES_GPU
 #include "../gpu/compute_gpu.hpp"  // For sTiles::gpu::GpuPersistentContext
@@ -26,11 +29,19 @@ namespace sTiles {
 void destroy_tiled_matrix(TiledMatrix* tm) {
     if (!tm) return;
 
-    // Release the per-call supernodal sparse handle (tile_type_mode==2 path).
+    // Release the per-call sparse-backend handle (tile_type_mode 2 or 4).
     // Each TiledMatrix owns its own; freeGroup deletes the underlying Handle
-    // (etree, symbolic, CellStore for L/Z) and nulls the pointer.
+    // and nulls the pointer.
     if (tm->sparse_handle) {
+#ifdef STILES_MFRONT
+        if (tm->sparse_backend == 4) {
+            sTiles::mfront::api::freeGroup(&tm->sparse_handle);
+        } else {
+            sTiles::sparse::api::freeGroup(&tm->sparse_handle);
+        }
+#else
         sTiles::sparse::api::freeGroup(&tm->sparse_handle);
+#endif
     }
 
     // Free persistent GPU context (handles, streams, events) - shared across chol/inv/solve
@@ -138,6 +149,13 @@ void destroy_tiled_matrix(TiledMatrix* tm) {
     tm->gpu_solve_bwd_tasks.reset();
     tm->gpu_solve_fwd_offsets.reset();
     tm->gpu_solve_bwd_offsets.reset();
+
+    // Vector members: release manually — the TiledMatrix destructor never
+    // runs (placement-new on calloc'd memory, freed as raw bytes).
+    std::vector<int>().swap(tm->semisparse_offset_lookup);
+#ifdef SPARSE_STILES
+    std::vector<int>().swap(tm->sparse_csc_offset_lookup);
+#endif
 }
 
 void destroy_all_schemes_for_group(sTiles_object* s, int group_index) {

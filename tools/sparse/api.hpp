@@ -57,6 +57,12 @@ int  set_user_permutation(void** obj, const int* perm, int n);
 void set_max_supernode(void** obj, int max_snode);
 void set_group_id(void** obj, int group_id);
 
+// ── Structure sharing ────────────────────────────────────────────────────────
+// INLA registers the same matrix as several groups and call slots; the
+// ordering/symbolic depend only on the graph, so handles wrapping an
+// identical graph clone the structure instead of recomputing it.
+int  clone_structure(void** dst, void** src, const int* row, const int* col);
+
 // ── Symbolic + numeric phases ────────────────────────────────────────────────
 int  assign_graph(void** obj, int n, int nnz, const int* row, const int* col);
 int  assign_values(void** obj, const double* values);

@@ -46,6 +46,7 @@ static constexpr size_t kMaxFactorNnz = 20'000'000'000ULL;
 const int* get_user_permutation(int group_index);
 int get_user_permutation_size(int group_index);
 bool get_user_permutation_force(int group_index);
+void set_user_permutation_internal(int group_index, const int* perm, int n);
 bool get_forced_partition_sizes(int group_index, int& p1, int& p2, int& sep);
 
 // ---- Mode-aware padding gate (fix for the mode-2 corruption) -------------

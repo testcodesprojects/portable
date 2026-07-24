@@ -67,6 +67,22 @@ bool get_forced_partition_sizes(int group_index, int& p1, int& p2, int& sep) {
     return false;
 }
 
+// Internal (non-expert-gated) variant used by the preprocessing pipeline to
+// donate an already-validated permutation from an identical earlier graph.
+void set_user_permutation_internal(int group_index, const int* perm, int n) {
+    if (group_index < 0 || !perm || n <= 0) return;
+    auto it = user_permutations.find(group_index);
+    if (it != user_permutations.end()) {
+        delete[] it->second.perm;
+        user_permutations.erase(it);
+    }
+    UserPermutation& up = user_permutations[group_index];
+    up.perm = new int[n];
+    std::copy(perm, perm + n, up.perm);
+    up.size  = n;
+    up.force = true;
+}
+
 } // namespace sTiles
 
 // C-linkage entry points (declared in tools/include/stiles.h inside extern "C").

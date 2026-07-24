@@ -1873,14 +1873,15 @@
             std::fill(chunk, chunk + elems, 0.0);
         };
 
-        auto scatter_entry = [&](int idx) {
+        // Chunk offset for one COO entry, -1 = dropped. Identical branch order
+        // to the historical per-call scatter; used only to build the plan below.
+        auto scatter_offset = [&](int idx) -> int {
             const int tile = S->tile_index_lookup[idx];
             if (tile < 0 || tile >= S->numActiveTiles) {
-                return;
+                return -1;
             }
-            double* chunk = S->chunkedDenseTiles[tile];
-            if (!chunk) {
-                return;
+            if (!S->chunkedDenseTiles[tile]) {
+                return -1;
             }
             const SemisparseTileMetaCore& semi = S->semisparseTileMetaCore[tile];
             const bool lapack_diag = uses_lapack_diagonal(tile);
@@ -1888,11 +1889,11 @@
             int diag_cols = (semi.upper_bw >= 0) ? (semi.upper_bw + 1) : 0;
             const int local_col = S->withinTileCol[idx];
             if (local_col < 0) {
-                return;
+                return -1;
             }
             const int local_row = S->withinTileRow[idx];
             if (local_row < 0) {
-                return;
+                return -1;
             }
             const TileMetaCore& meta = S->tileMetaCore[tile];
             const int h = (meta.height > 0) ? meta.height : S->tile_size;
@@ -1902,53 +1903,61 @@
                 diag_cols = w;
             }
 
-            // Handle LAPACK banded format for diagonal tiles first
-            // (don't need acol for this case)
+            // LAPACK banded format for diagonal tiles first (no acol needed)
             if (lapack_diag) {
                 if (w <= 0 || diag_cols <= 0) {
-                    return;
+                    return -1;
                 }
                 if (local_col >= w || local_row >= h) {
-                    return;
+                    return -1;
                 }
                 const int band = local_col - local_row;
                 if (band < 0 || band >= diag_cols) {
-                    return;
+                    return -1;
                 }
                 const int lapack_row = diag_cols - 1 - band;
-                const std::size_t offset = static_cast<std::size_t>(lapack_row)
-                                         + static_cast<std::size_t>(diag_cols)
-                                         * static_cast<std::size_t>(local_col);
-                chunk[offset] = x[idx];
-                return;
+                return lapack_row + diag_cols * local_col;
             }
 
             if (local_row >= h) {
-                return;
+                return -1;
             }
             if (is_diag && diag_cols > 0) {
                 const int band = local_col - local_row;
                 if (band < 0 || band >= diag_cols) {
-                    return;
+                    return -1;
                 }
-                const std::size_t offset = static_cast<std::size_t>(local_row)
-                                         + static_cast<std::size_t>(band) * static_cast<std::size_t>(h);
-                chunk[offset] = x[idx];
-                return;
+                return local_row + band * h;
             }
 
             // For non-diagonal or non-LAPACK tiles, check acol bounds now
             if (semi.acol.empty() || semi.sa <= 0 || local_col >= static_cast<int>(semi.acol.size())) {
-                return;
+                return -1;
             }
             const int active_col = semi.acol[static_cast<std::size_t>(local_col)];
             if (active_col < 0 || active_col >= semi.sa) {
-                return;
+                return -1;
             }
-            const std::size_t offset = static_cast<std::size_t>(local_row)
-                                     + static_cast<std::size_t>(active_col) * static_cast<std::size_t>(h);
-            chunk[offset] = x[idx];
+            return local_row + active_col * h;
         };
+
+        // Direct scatter plan: offsets are pure tile structure, so the branchy
+        // math above runs once per scheme. Every later call (once per theta
+        // evaluation in outer optimizer loops) is a zero + one indexed store
+        // per nonzero — same shape as the dense-tile path.
+        if (static_cast<int>(S->semisparse_offset_lookup.size()) != nnz) {
+            S->semisparse_offset_lookup.assign(static_cast<std::size_t>(nnz), -1);
+            int* plan_build = S->semisparse_offset_lookup.data();
+            #ifdef _OPENMP
+            #pragma omp parallel for schedule(static) num_threads(cores) if(do_parallel)
+            #endif
+            for (int idx = 0; idx < nnz; ++idx) {
+                plan_build[idx] = scatter_offset(idx);
+            }
+        }
+        const int* plan            = S->semisparse_offset_lookup.data();
+        const int* tile_of         = S->tile_index_lookup;
+        double* const* chunk_of    = S->chunkedDenseTiles;
 
         #ifdef _OPENMP
             if (do_parallel) {
@@ -1961,7 +1970,8 @@
 
                     #pragma omp for schedule(static)
                     for (int idx = 0; idx < nnz; ++idx) {
-                        scatter_entry(idx);
+                        const int off = plan[idx];
+                        if (off >= 0) chunk_of[tile_of[idx]][off] = x[idx];
                     }
                 }
             } else
@@ -1971,7 +1981,8 @@
                     zero_tile(t);
                 }
                 for (int idx = 0; idx < nnz; ++idx) {
-                    scatter_entry(idx);
+                    const int off = plan[idx];
+                    if (off >= 0) chunk_of[tile_of[idx]][off] = x[idx];
                 }
             }
 
@@ -1979,6 +1990,50 @@
 
 #ifdef SPARSE_STILES
             if (S->sparseTileCSC) {
+                // Direct plan into SparseTileCSC values: the banded offset /
+                // CSC position search is pure structure — run it once, then
+                // every call is a zero + one indexed store per nonzero.
+                if (static_cast<int>(S->sparse_csc_offset_lookup.size()) != nnz) {
+                    S->sparse_csc_offset_lookup.assign(static_cast<std::size_t>(nnz), -1);
+                    for (int idx = 0; idx < nnz; ++idx) {
+                        const int tile = S->tile_index_lookup[idx];
+                        if (tile < 0 || tile >= S->numActiveTiles) continue;
+
+                        SparseTileCSC &csc = S->sparseTileCSC[tile];
+                        if (csc.values.empty()) continue;
+
+                        const int local_row = S->withinTileRow[idx];
+                        const int local_col = S->withinTileCol[idx];
+                        if (local_row < 0 || local_col < 0) continue;
+
+                        const SemisparseTileMetaCore &semi = S->semisparseTileMetaCore[tile];
+                        const TileMetaCore &meta = S->tileMetaCore[tile];
+                        const bool is_diag = is_diagonal_tile(tile) || uses_lapack_diagonal(tile);
+
+                        if (is_diag) {
+                            // Banded format: same indexing as semisparse diagonal scatter
+                            const int kd = (semi.upper_bw >= 0) ? semi.upper_bw : 0;
+                            const int band = local_col - local_row;
+                            if (band < 0 || band > kd) continue;
+                            const int ldab = kd + 1;
+                            const int lapack_row = kd - band;
+                            S->sparse_csc_offset_lookup[static_cast<std::size_t>(idx)] =
+                                lapack_row + ldab * local_col;
+                        } else {
+                            // CSC format: find position in colptr/rowind
+                            const int width = (meta.width > 0) ? meta.width : S->tile_size;
+                            if (local_col >= width) continue;
+                            const int col_start = csc.colptr[static_cast<std::size_t>(local_col)];
+                            const int col_end   = csc.colptr[static_cast<std::size_t>(local_col) + 1];
+                            for (int p = col_start; p < col_end; ++p) {
+                                if (csc.rowind[static_cast<std::size_t>(p)] == local_row) {
+                                    S->sparse_csc_offset_lookup[static_cast<std::size_t>(idx)] = p;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
                 // Zero sparse tile values
                 for (int t = 0; t < S->numActiveTiles; ++t) {
                     SparseTileCSC &csc = S->sparseTileCSC[t];
@@ -1986,45 +2041,11 @@
                         std::fill(csc.values.begin(), csc.values.end(), 0.0);
                 }
                 // Scatter x[] directly into SparseTileCSC values
+                const int* csc_plan = S->sparse_csc_offset_lookup.data();
                 for (int idx = 0; idx < nnz; ++idx) {
-                    const int tile = S->tile_index_lookup[idx];
-                    if (tile < 0 || tile >= S->numActiveTiles) continue;
-
-                    SparseTileCSC &csc = S->sparseTileCSC[tile];
-                    if (csc.values.empty()) continue;
-
-                    const int local_row = S->withinTileRow[idx];
-                    const int local_col = S->withinTileCol[idx];
-                    if (local_row < 0 || local_col < 0) continue;
-
-                    const SemisparseTileMetaCore &semi = S->semisparseTileMetaCore[tile];
-                    const TileMetaCore &meta = S->tileMetaCore[tile];
-                    const bool is_diag = is_diagonal_tile(tile) || uses_lapack_diagonal(tile);
-
-                    if (is_diag) {
-                        // Banded format: same indexing as semisparse diagonal scatter
-                        const int kd = (semi.upper_bw >= 0) ? semi.upper_bw : 0;
-                        const int band = local_col - local_row;
-                        if (band < 0 || band > kd) continue;
-                        const int ldab = kd + 1;
-                        const int lapack_row = kd - band;
-                        const std::size_t offset = static_cast<std::size_t>(lapack_row)
-                                                 + static_cast<std::size_t>(ldab)
-                                                 * static_cast<std::size_t>(local_col);
-                        csc.values[offset] = x[idx];
-                    } else {
-                        // CSC format: find position in colptr/rowind
-                        const int width = (meta.width > 0) ? meta.width : S->tile_size;
-                        if (local_col >= width) continue;
-                        const int col_start = csc.colptr[static_cast<std::size_t>(local_col)];
-                        const int col_end   = csc.colptr[static_cast<std::size_t>(local_col) + 1];
-                        for (int p = col_start; p < col_end; ++p) {
-                            if (csc.rowind[static_cast<std::size_t>(p)] == local_row) {
-                                csc.values[static_cast<std::size_t>(p)] = x[idx];
-                                break;
-                            }
-                        }
-                    }
+                    const int off = csc_plan[idx];
+                    if (off >= 0)
+                        S->sparseTileCSC[S->tile_index_lookup[idx]].values[static_cast<std::size_t>(off)] = x[idx];
                 }
             }
 #endif

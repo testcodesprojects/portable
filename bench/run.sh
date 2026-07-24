@@ -65,6 +65,22 @@ for mtx in "${mats[@]}"; do
             gdb -batch -ex run -ex "thread apply all bt" \
                 --args ./speedtest "$mtx" "$CORES" "$TILE" 2>&1 | sed 's/^/  /' | tail -80
         fi
+        # Bisect the failure: same matrix, ONE core. Passing here pins the
+        # crash on threading/concurrency; failing too says it is not
+        # thread-count dependent (init, codegen, a dep...). Skipped when the
+        # failing run already was single-core.
+        if [ "$CORES" != "1" ]; then
+            echo "  --- retry with 1 core ---"
+            retry_out="$(mktemp "${TMPDIR:-/tmp}/stiles_retry.XXXXXX")"
+            if ./speedtest "$mtx" 1 "$TILE" > "$retry_out" 2>&1; then
+                sed 's/^/  /' "$retry_out"
+                echo "  single-core PASSED -> failure is threading/concurrency-related"
+            else
+                sed 's/^/  /' "$retry_out" | tail -20
+                echo "  single-core FAILED too -> not thread-count dependent"
+            fi
+            rm -f "$retry_out"
+        fi
     fi
 done
 rm -f "$errlog"

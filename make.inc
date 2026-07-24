@@ -275,6 +275,22 @@ else
     SANITIZE_LDFLAGS :=
 endif
 
+# Keep frame pointers in optimized builds (negligible cost) so a crash inside
+# libstiles gives lldb/gdb a real backtrace instead of "PC=0". Used by the
+# experimental CI lanes while they stabilize; harmless to leave on anywhere.
+STILES_FRAME_POINTERS ?= 0
+ifeq ($(STILES_FRAME_POINTERS),1)
+    OPT_FLAGS += -fno-omit-frame-pointer
+endif
+
+# macOS single-file embed switch: STILES_MACOS_EMBED=0 skips force_loading the
+# Homebrew static archives (libomp/openblas/gfortran/hwloc) into the dylib and
+# keeps them dynamic — the CI dylibbundler net still makes the artifact
+# self-contained (deps become @loader_path siblings instead of one file).
+# Exists to (a) bisect embed-related crashes and (b) avoid loading TWO copies
+# of libomp when the consumer process links libomp dynamically as well.
+STILES_MACOS_EMBED ?= 1
+
 #==============================================================================
 # OpenMP Configuration
 #==============================================================================

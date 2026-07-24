@@ -180,7 +180,9 @@ LDFLAGS_SHARED := $(SANITIZE_LDFLAGS) $(OPENMP_LIBS) $(NUMA_LINK) \
 # Only when the build actually resolved to OpenBLAS: force-loading
 # libopenblas.a into a dylib whose code calls a DIFFERENT backend (Accelerate/
 # ARMPL) would embed a dead second BLAS and invite duplicate-symbol clashes.
-ifeq ($(PLATFORM)$(BLAS_DETECTED),macosopenblas)
+# STILES_MACOS_EMBED=0 (make.inc) skips the embed entirely — dynamic deps,
+# with the CI dylibbundler net still making the shipped artifact Homebrew-free.
+ifeq ($(PLATFORM)$(BLAS_DETECTED)$(STILES_MACOS_EMBED),macosopenblas1)
     MACOS_BREW  := $(shell brew --prefix 2>/dev/null || echo /opt/homebrew)
     # Wildcards catch the versioned/plain archive names Homebrew uses
     # (e.g. libopenblas.a or libopenblasp-r0.3.33.a). LAPACKE is taken from

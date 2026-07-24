@@ -292,6 +292,18 @@ jobs:
             # the server cores that actually execute this artifact).
             # USE_LIBXSMM=0: skip the fragile libxsmm build on arm64.
             MAKEARGS="USE_LIBXSMM=0 OPENBLAS_STATIC_ROOT=$PWD/local/openblas"
+          elif [ "${{ matrix.name }}" = "macos-intel-x86_64" ]; then
+            # EXPERIMENT (lane is experimental): the smoke segfaults at PC=0
+            # with EMPTY stderr on this lane only — dies before the library
+            # logs a single line. The biggest arm-vs-intel build difference is
+            # the single-file static embed, and two libomp copies (embedded +
+            # the bench's dynamic one) are a documented segfault mode (see the
+            # ARMPL note in make.inc). So: build WITHOUT the embed (the
+            # dylibbundler net still makes the artifact self-contained, as
+            # @loader_path siblings) and WITH frame pointers so any remaining
+            # crash finally unwinds in lldb. If the smoke passes, the embed
+            # was the culprit; if it still crashes, we get a real backtrace.
+            MAKEARGS="USE_LIBXSMM=0 STILES_MACOS_EMBED=0 STILES_FRAME_POINTERS=1"
           else
             # macOS Apple Silicon (-mcpu=apple-m1).
             # USE_LIBXSMM=0: skip the fragile libxsmm clone/build here too.

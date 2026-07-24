@@ -8,6 +8,12 @@
 #include <fstream>
 #include <mutex>
 #include <vector>
+// Pre-include <omp.h> OUTSIDE any extern "C". Further down, fsort/fluxsort.h is
+// pulled in inside an `extern "C"` block and it #includes fluxsort.c, which does
+// `#include <omp.h>`. MinGW's omp.h contains C++ templates, which cannot have C
+// linkage ("template with C linkage" error). Including it here first — with C++
+// linkage — makes that later include a guarded no-op, so MinGW builds cleanly.
+#include <omp.h>
 
 
 

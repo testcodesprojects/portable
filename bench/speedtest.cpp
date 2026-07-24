@@ -141,6 +141,33 @@ int main(int argc, char** argv) {
     sTiles_bind(0, 0, &st); sTiles_selinv(0, 0, &st); sTiles_unbind(0, 0, &st);
     auto t5 = clk::now();
 
+    // ---- Selected-inverse CORRECTNESS (Z is fresh here) ----------------------
+    // selinv is only TIMED above; nothing gates its VALUES. Cross-check a spread
+    // of diag(Q^-1) entries against ground truth from the (residual-gated) solve
+    // path: (Q^-1)[i][i] == (solve Q x = e_i)[i]. The diagonal is always in the
+    // factor pattern, so selinv returns it exactly. Read Z FIRST (before the
+    // reference solve can touch internal state); one multi-RHS solve does all K.
+    double zerr = 0.0;
+    {
+        const int    K      = (m.n < 16 ? m.n : 16);
+        const size_t stride = (size_t)m.n;                 // column stride
+        std::vector<int>    probe(K);
+        std::vector<double> zii(K);
+        for (int k = 0; k < K; ++k) {
+            probe[k] = (int)((long long)k * m.n / K);      // spread across [0,n)
+            zii[k]   = sTiles_get_selinv_elm(0, 0, probe[k], probe[k], &st);
+        }
+        std::vector<double> Bd(stride * (size_t)K, 0.0);
+        for (int k = 0; k < K; ++k) Bd[(size_t)k * stride + probe[k]] = 1.0;   // e_{probe[k]}
+        sTiles_bind(0, 0, &st);
+        sTiles_solve_LLT(0, 0, &st, Bd.data(), K);         // in place -> columns of Q^-1
+        sTiles_unbind(0, 0, &st);
+        for (int k = 0; k < K; ++k) {
+            const double truth = Bd[(size_t)k * stride + probe[k]];           // (Q^-1)[i][i]
+            zerr = std::fmax(zerr, std::fabs(zii[k] - truth) / std::fmax(std::fabs(truth), 1e-300));
+        }
+    }
+
     // ---- Solve A X = B at two RHS widths: 1 and tile+1 (e.g. 41 for tile 40).
     // Manufactured X_TRUE, B = A*X_TRUE, solve in place, worst-column relative
     // residual ||x - x_true|| / ||x_true||. Best-of-3 (the first solve pays a
@@ -178,16 +205,17 @@ int main(int argc, char** argv) {
     sTiles_quit();
 
     // ---- Verdict ----
-    const bool ok = std::isfinite(logdet) && res1 < 1e-6 && resT < 1e-6;
+    const bool ok = std::isfinite(logdet) && res1 < 1e-6 && resT < 1e-6 && zerr < 1e-6;
     const double fill = m.nnz ? (double)nnzL / m.nnz : 0.0;
 
-    std::printf("%-14s %8d %10d %6.2f %8.4f %8.4f %8.4f %8.4f %15.4f %10.2e %10.2e  %s\n",
+    std::printf("%-14s %8d %10d %6.2f %8.4f %8.4f %8.4f %8.4f %15.4f %10.2e %10.2e %10.2e  %s\n",
                 basename_of(path), m.n, m.nnz, fill,
                 secs(t2, t3),   // chol
                 secs(t4, t5),   // selinv
                 t_slv1,         // solve rhs=1
                 t_slvT,         // solve rhs=tile+1
                 logdet, res1, resT,
+                zerr,           // selinv diag error vs solve ground truth
                 ok ? "PASS" : "FAIL");
     (void)t0; (void)t1;
     return ok ? 0 : 1;

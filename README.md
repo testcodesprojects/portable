@@ -24,11 +24,27 @@ for portability (AVX2 baseline on x86-64; Apple Silicon native on arm64).
 ### Prerequisites
 
 - A C/C++/Fortran toolchain (`g++`/`gfortran` on Linux, or Homebrew `gcc` on macOS)
-- `hwloc` (topology detection) and a BLAS/LAPACK:
-  - **Linux**: Intel MKL *or* OpenBLAS (`sudo apt install libopenblas-dev liblapacke-dev libhwloc-dev`)
-  - **macOS**: `brew install gcc libomp hwloc openblas lapack`
-    (OpenBLAS provides the LAPACKE interface that Apple's Accelerate lacks)
+- `hwloc` (topology detection) and a BLAS/LAPACK (see the table below)
 - Network on the first build (fetches libxsmm; cached afterwards)
+
+### Best BLAS per system (auto-detected in this order; install the top one)
+
+The prebuilt CI artifacts already **embed** the best redistributable BLAS —
+nothing to install. This table is for building from source; `make show-config`
+prints what was detected, and the build emits a one-line hint when a faster
+option exists for your machine.
+
+| System | Fastest option | Install |
+|---|---|---|
+| Linux x86_64 (Intel & most AMD) | Intel MKL | `apt/dnf install intel-oneapi-mkl-devel`, then `source /opt/intel/oneapi/setvars.sh` |
+| Linux arm64 with SVE (Graviton3+, NVIDIA Grace) | ARM Performance Libraries | Arm installer/module; `export ARMPL_DIR=<prefix>` |
+| Linux arm64 NEON (Graviton2, Ampere, RPi) | OpenBLAS | `sudo apt install libopenblas-dev liblapacke-dev` |
+| macOS Apple Silicon | OpenBLAS (Accelerate/AMX under evaluation — try `make STILES_FORCE_ACCELERATE=1`) | `brew install openblas lapack` |
+| macOS Intel | OpenBLAS | `brew install openblas lapack` |
+
+macOS also needs `brew install gcc libomp hwloc` regardless of BLAS choice
+(OpenBLAS supplies the LAPACKE interface Apple's Accelerate lacks; the
+Accelerate path uses sTiles' built-in LAPACKE shim instead).
 
 The graph-ordering dependencies (SCOTCH, METIS + GKlib, and the AMD/CAMD/
 COLAMD/CCOLAMD/BTF part of SuiteSparse) are **vendored** and compiled directly

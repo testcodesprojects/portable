@@ -5,11 +5,11 @@
 # Linux), builds NATIVELY on each — no cross-compiling — and collects the
 # .so/.dylib as downloadable artifacts.
 #
-# Two native builds ship: linux-x86_64 and macos-apple-arm64. There is no
-# Intel-Mac build: GitHub is retiring the Intel (macos-13) runners, so that job
-# just hangs forever waiting for a machine. The Linux x86_64 build already gives
-# full AVX2 x86_64 performance, and arm64 covers every modern Mac (see the note
-# on the matrix below for how to add Intel back if you ever need it).
+# Four native builds ship: linux-x86_64 (static MKL), linux-arm64 (static
+# OpenBLAS), macos-apple-arm64 (Homebrew OpenBLAS), and macos-intel-x86_64
+# (Homebrew OpenBLAS on GitHub's macos-15-intel runner — the last x86_64 mac
+# image, supported ~until Aug 2027). Intel Macs need a native x86_64 dylib
+# because an arm64 dylib can't load into an x86_64 Python/R process.
 #
 # WHY no AVX2-vs-AVX512 matrix here: sTiles' hot FLOPs live in MKL/libxsmm,
 # which pick their widest CPU kernels at RUNTIME. So one portable build per
@@ -30,6 +30,9 @@
 #   macos-accelerate-bench   does Accelerate (Apple AMX) beat OpenBLAS here?
 #   linux-x86-blas-compare   does MKL beat OpenBLAS on this (Intel or AMD)
 #                            runner? (workflow_dispatch only)
+# blas-override-tests (GATING, unlike the diagnostics) proves every BLAS
+# override knob resolves to the right backend (fake install trees; precedence
+# incl. override-beats-autodetect) and that an overridden build factors ferris.
 # On v* tags, the release job attaches every artifact to the GitHub Release
 # (workflow artifacts alone expire after 90 days).
 #
@@ -81,13 +84,18 @@ jobs:
             # every arm64 Linux since ~2018 — the bare Ubuntu 24.04 runner
             # would bake in a glibc 2.39 floor.
             container: quay.io/pypa/manylinux_2_28_aarch64
-          # NOTE: no macos-intel-x86_64 job. GitHub is retiring the Intel
-          # (macos-13) runners, so that job just sits in the queue forever
-          # ("waiting for a runner"). The Linux x86_64 build already ships full
-          # AVX2 x86_64 performance for x86 users, and arm64 (Mac + Linux) covers
-          # ARM. To add a native Intel-Mac dylib back, restore a macos-13 entry
-          # (if runners return) or cross-build x86_64 on the arm64 runner via a
-          # Rosetta x86_64 toolchain (needs x86_64 gfortran for the Fortran AMD).
+          - name: macos-intel-x86_64
+            os: macos-15-intel     # GitHub's Intel (x86_64) macOS runner: GA, the
+                                   # LAST x86_64 mac image (supported ~until Aug 2027).
+            arch: x86_64
+            # Native x86_64 dylib for Intel-Mac users — an arm64 dylib cannot load
+            # into an x86_64 Python/R process, so Intel users genuinely need this.
+            # BLAS = Homebrew OpenBLAS (make.inc auto-detects /usr/local/opt/openblas):
+            # Intel dropped macOS MKL after 2023.2, and on Intel OpenBLAS's tuned x86
+            # kernels match/beat Accelerate (whose edge is AMX, Apple-Silicon-only).
+            # The `else` MAKEARGS branch gives USE_LIBXSMM=0 (the mac libxsmm build is
+            # fragile), and make.inc's x86 default MARCH=avx2 -> -march=haswell
+            # (AVX2, universal on every Intel Mac since 2013).
 
     steps:
       - uses: actions/checkout@v4
@@ -395,8 +403,15 @@ jobs:
           if [ "${{ matrix.name }}" = "linux-arm64" ]; then
             export OPENBLAS_STATIC_ROOT="$PWD/local/openblas"   # bench.inc BLAS link
           fi
-          CPU="$(lscpu 2>/dev/null | sed -n 's/^Model name:[[:space:]]*//p' | head -1)"
-          [ -n "$CPU" ] || CPU="$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo unknown)"
+          # Branch on OS: with -e + pipefail active, a missing lscpu on macOS
+          # would fail the assignment itself (pipeline status 127) and kill the
+          # step before any fallback line runs.
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            CPU="$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo unknown)"
+          else
+            CPU="$(lscpu 2>/dev/null | sed -n 's/^Model name:[[:space:]]*//p' | head -1 || true)"
+            [ -n "$CPU" ] || CPU=unknown
+          fi
           cd bench
           ./run.sh | tee speed.txt
           {
@@ -695,6 +710,82 @@ jobs:
             echo '#### MKL (sequential — the shipped x86_64 configuration)'
             echo '```'; cat mkl_speed.txt; echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # GATING test: prove every BLAS override knob RESOLVES to the right backend,
+  # and that an overridden build actually runs (factors ferris). Hosted runners
+  # have no ARMPL/SVE/AMD-specific hardware, so what cannot be exercised for
+  # real is exercised at the CONFIG level with fake install trees — detection
+  # and precedence are pure make.inc parse logic, identical on every arch —
+  # while the combinations that do exist on the runner (OpenBLAS on Linux,
+  # OpenBLAS/Accelerate resolution on macOS) also build + run. Fast and
+  # deterministic, so unlike the *-diagnostic jobs this one gates CI.
+  blas-override-tests:
+    name: blas-override-tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            g++ gfortran make pkg-config libhwloc-dev libnuma-dev \
+            zlib1g-dev libbz2-dev liblzma-dev libopenblas-dev liblapacke-dev
+      - name: deps (macOS)
+        if: runner.os == 'macOS'
+        run: brew install gcc libomp hwloc openblas lapack
+      - name: Override-resolution asserts (fake install trees, config level)
+        run: |
+          # Fake installs: make.inc's detection is wildcard/header probing at
+          # parse time, so a touched header + lib file IS an install to it.
+          FAKE="$RUNNER_TEMP/fake"
+          mkdir -p "$FAKE/mkl/include" "$FAKE/ob/lib" "$FAKE/ob/include" \
+                   "$FAKE/armpl/include" "$FAKE/armpl/lib"
+          touch "$FAKE/mkl/include/mkl.h" "$FAKE/ob/lib/libopenblas.a" \
+                "$FAKE/armpl/include/armpl.h" "$FAKE/armpl/lib/libarmpl.so"
+          check() {  # check <expected-substring> [make args...]
+            want="$1"; shift
+            out="$(make show-config "$@" 2>&1)" \
+              || { echo "$out" | tail -20; echo "::error::make show-config $* failed"; exit 1; }
+            echo "$out" | grep -qF "$want" \
+              || { echo "$out" | head -25; echo "::error::[$*] did not resolve to: $want"; exit 1; }
+            echo "OK: [$*] -> $want"
+          }
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            check 'Intel MKL detected'                 MKLROOT="$FAKE/mkl"
+            # The override must BEAT auto-detection, not just work alone:
+            check 'OpenBLAS detected'                  MKLROOT="$FAKE/mkl" USE_OPENBLAS=1
+            check 'static OpenBLAS'                    MKLROOT="$FAKE/mkl" OPENBLAS_STATIC_ROOT="$FAKE/ob"
+            # arm64 selection is plain make text — simulate the arch:
+            check 'ARM Performance Libraries detected' UNAME_M=aarch64 ARMPL_DIR="$FAKE/armpl"
+            check 'OpenBLAS detected'                  UNAME_M=aarch64 ARMPL_DIR="$FAKE/armpl" USE_OPENBLAS=1
+            check 'hint: on SVE CPUs'                  UNAME_M=aarch64 USE_OPENBLAS=1
+          else
+            check 'OpenBLAS detected'
+            check 'Accelerate framework FORCED'        STILES_FORCE_ACCELERATE=1
+            check 'ARM Performance Libraries detected' ARMPL_DIR="$FAKE/armpl"
+            # Forced Accelerate must beat an installed ARMPL:
+            check 'Accelerate framework FORCED'        ARMPL_DIR="$FAKE/armpl" STILES_FORCE_ACCELERATE=1
+            check 'hint: Apple'"'"'s Accelerate'
+          fi
+      # The overridden configuration must not just resolve — it must WORK.
+      # Linux: force OpenBLAS (the non-default there) and factor ferris.
+      # macOS functional coverage lives in the build lane (OpenBLAS, full
+      # bench) and macos-accelerate-bench (Accelerate) — not duplicated here.
+      # USE_LIBXSMM=0 keeps this quick; the BLAS knob is what's under test.
+      - name: Functional — overridden build factors ferris (Linux, USE_OPENBLAS=1)
+        if: runner.os == 'Linux'
+        run: |
+          set -o pipefail
+          make all USE_OPENBLAS=1 USE_LIBXSMM=0 > build.log 2>&1 \
+            || { echo "::group::build errors"; grep -nE 'error:|undefined reference|ld: ' build.log | head -20; tail -20 build.log; echo "::endgroup::"; exit 1; }
+          cd bench && ./run.sh mats/ferris.mtx | tee ferris.txt
+          { echo '### blas-override-tests: Linux USE_OPENBLAS=1 — ferris'
+            echo '```'; cat ferris.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
   # On v* tags: attach every built artifact to the GitHub Release, so users
   # download libstiles from the Releases page instead of fishing 90-day

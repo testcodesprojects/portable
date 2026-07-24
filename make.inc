@@ -357,11 +357,16 @@ ifeq ($(STILES_FORCE_ACCELERATE)$(PLATFORM),1macos)
     $(info BLAS: Accelerate framework FORCED (STILES_FORCE_ACCELERATE=1))
 endif
 
-# Step 1: ARM Performance Libraries (ARMPL) - macOS ARM64 FIRST
-# ARMPL is the fastest option on Apple Silicon Macs.
+# Step 1: ARM Performance Libraries (ARMPL) — any arm64 (macOS AND Linux) FIRST
+# ARMPL is Arm's own tuned BLAS/LAPACK: the fastest option on Apple Silicon
+# Macs, and on SVE-capable Linux arm64 (Graviton3+/NVIDIA Grace) typically
+# 10-20% ahead of OpenBLAS. On NEON-only cores (Graviton2/Ampere) it is ~a tie
+# with OpenBLAS, so probing it first is never a loss. Only detected when the
+# user actually installed it (deliberate choice) — the CI artifact still embeds
+# OpenBLAS (BSD, freely redistributable; ARMPL's license is not).
 # Skipped with USE_ARMPL=0 or USE_OPENBLAS=1 (and by the Step 0 overrides).
-ifeq ($(PLATFORM)$(BLAS_DETECTED),macosnone)
-  ifeq ($(UNAME_M),arm64)
+ifeq ($(BLAS_DETECTED),none)
+  ifneq ($(filter arm64 aarch64,$(UNAME_M)),)
     ifneq ($(USE_ARMPL),0)
       ifneq ($(USE_OPENBLAS),1)
         ifneq ($(strip $(ARMPL_DIR)),)
@@ -377,8 +382,23 @@ ifeq ($(PLATFORM)$(BLAS_DETECTED),macosnone)
         ifneq ($(strip $(ARMPL_PREFIX)),)
             BLAS_DETECTED := armpl
             LAPACKE_INC := -I$(ARMPL_PREFIX)/include
-            LAPACKE_LIB := -L$(ARMPL_PREFIX)/lib -larmpl -lamath -lastring
             LAPACKE_DEF := -DUSE_ARMPL
+            ifeq ($(PLATFORM),macos)
+                LAPACKE_LIB := -L$(ARMPL_PREFIX)/lib -larmpl -lamath -lastring
+            else
+                # Linux: serial LP64 variant (sTiles parallelizes at the tile
+                # level, so the _mp/OpenMP flavor would only oversubscribe).
+                # ARMPL >= 24.04 names it libarmpl.so; older ships
+                # libarmpl_lp64.so — pick whichever this install has.
+                ifneq ($(wildcard $(ARMPL_PREFIX)/lib/libarmpl_lp64.*),)
+                    ARMPL_LIBNAME := armpl_lp64
+                else
+                    ARMPL_LIBNAME := armpl
+                endif
+                ARMPL_AMATH := $(if $(wildcard $(ARMPL_PREFIX)/lib/libamath.*),-lamath,)
+                LAPACKE_LIB := -L$(ARMPL_PREFIX)/lib $(RPATH_FLAG)$(ARMPL_PREFIX)/lib \
+                               -l$(ARMPL_LIBNAME) $(ARMPL_AMATH) -lm
+            endif
             $(info BLAS: ARM Performance Libraries detected at $(ARMPL_PREFIX))
         endif
       endif
@@ -513,6 +533,28 @@ ifeq ($(BLAS_DETECTED),none)
     $(warning ============================================================)
     LAPACKE_LIB := -llapacke -llapack -lblas
     LAPACKE_DEF := -DUSE_GENERIC_LAPACKE
+endif
+
+# Best-BLAS advisory: when the detected backend is likely NOT the fastest one
+# available for THIS system, say so in one line and build on unchanged. The
+# shipped CI artifacts already embed the per-platform best (MKL on x86_64,
+# OpenBLAS on arm64); these hints guide people building from source. Silent
+# when OPENBLAS_STATIC_ROOT drove detection: that is the CI's deliberate
+# redistributable-embed choice, not a missed optimization.
+ifeq ($(strip $(OPENBLAS_STATIC_ROOT)),)
+ifneq ($(filter openblas system,$(BLAS_DETECTED)),)
+    ifeq ($(PLATFORM),linux)
+        ifeq ($(UNAME_M),x86_64)
+            $(info hint: Intel MKL is usually fastest on x86-64. Install intel-oneapi-mkl-devel, `source /opt/intel/oneapi/setvars.sh`, and rebuild.)
+        endif
+        ifneq ($(filter arm64 aarch64,$(UNAME_M)),)
+            $(info hint: on SVE CPUs (Graviton3+/NVIDIA Grace) ARM Performance Libraries is often 10-20% faster. Install ARMPL, set ARMPL_DIR=<prefix>, and rebuild.)
+        endif
+    endif
+    ifeq ($(PLATFORM)$(UNAME_M),macosarm64)
+        $(info hint: Apple's Accelerate (AMX units) may beat OpenBLAS on Apple Silicon — compare with `make STILES_FORCE_ACCELERATE=1` (needs macOS 13.3+).)
+    endif
+endif
 endif
 
 # Allow user to override LAPACKE header location

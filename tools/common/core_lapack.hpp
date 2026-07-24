@@ -34,17 +34,17 @@
     #include <armpl.h>
 
 #elif defined(USE_ACCELERATE)
-    // macOS Accelerate framework (includes CBLAS and LAPACK)
-    #include <Accelerate/Accelerate.h>
-    // Accelerate provides lapacke.h since macOS 13.3 (Ventura)
-    // For older macOS, users need: brew install lapack
-    #ifdef ACCELERATE_NEW_LAPACK
-        // macOS 13.3+ has LAPACKE in vecLib
-        #include <vecLib/lapacke.h>
-    #else
-        // Older macOS - need Homebrew lapacke
-        #include <lapacke.h>
+    // macOS Accelerate framework: CBLAS + Fortran LAPACK, but NO LAPACKE C
+    // layer — the SDK ships no vecLib/lapacke.h (measured by CI's
+    // macos-accelerate-bench job against Xcode 15.4). ACCELERATE_NEW_LAPACK
+    // (macOS 13.3+) exposes LAPACK 3.9.1 Fortran prototypes; the shim below
+    // maps sTiles' LAPACKE call surface onto them. Without the new interface
+    // Accelerate only offers 2009's LAPACK 3.2.1 — not supported.
+    #ifndef ACCELERATE_NEW_LAPACK
+        #error "USE_ACCELERATE requires ACCELERATE_NEW_LAPACK (macOS 13.3+ SDK) — make.inc defines both together"
     #endif
+    #include <Accelerate/Accelerate.h>
+    #include "lapacke_accel_shim.hpp"
 
 #elif defined(USE_GENERIC_LAPACKE)
     // Generic BLAS/LAPACK (OpenBLAS, reference BLAS, etc.)

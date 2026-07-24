@@ -39,9 +39,9 @@ fi
 
 echo ""
 echo "sTiles speed test   cores=$CORES  tile=$TILE   (solve at rhs=1 and rhs=$((TILE + 1)))"
-printf '%-14s %8s %10s %6s %8s %8s %8s %8s %15s %10s %10s  %s\n' \
-       matrix n nnz fill "chol(s)" "selinv" "slv1(s)" "slvT(s)" logdet "res(1)" "res(T+1)" status
-printf '%.0s-' $(seq 1 122); echo
+printf '%-14s %8s %10s %6s %8s %8s %8s %8s %15s %10s %10s %10s  %s\n' \
+       matrix n nnz fill "chol(s)" "selinv" "slv1(s)" "slvT(s)" logdet "res(1)" "res(T+1)" "z_err" status
+printf '%.0s-' $(seq 1 133); echo
 
 fail=0
 # Explicit template: bare `mktemp` errors on macOS/BSD (needs one).

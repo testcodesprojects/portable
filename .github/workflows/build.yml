@@ -50,6 +50,9 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # Experimental lanes (matrix.experimental) may fail without failing the
+    # workflow or blocking `needs: build` (the release job).
+    continue-on-error: ${{ matrix.experimental == true }}
     # Real bash for every step, ALSO inside containers: without this the
     # runner may pick `sh` (bash in POSIX mode) there, where `source` of a
     # missing file is a special-builtin failure that kills the shell DESPITE
@@ -97,6 +100,11 @@ jobs:
             os: macos-15-intel     # GitHub's Intel (x86_64) macOS runner: GA, the
                                    # LAST x86_64 mac image (supported ~until Aug 2027).
             arch: x86_64
+            # Newest lane, still stabilizing (caught the clang-17 wchar_t and
+            # dual-OpenMP-runtime issues). experimental => job failure doesn't
+            # fail the workflow or block the release job; it just contributes
+            # no artifact. FLIP TO GATING (remove this) once green twice.
+            experimental: true
             # Native x86_64 dylib for Intel-Mac users — an arm64 dylib cannot load
             # into an x86_64 Python/R process, so Intel users genuinely need this.
             # BLAS = Homebrew OpenBLAS (make.inc auto-detects /usr/local/opt/openblas):

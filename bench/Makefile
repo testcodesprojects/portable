@@ -12,7 +12,10 @@
 STILES_PATH ?= $(shell cd .. && pwd)
 include $(STILES_PATH)/bench.inc
 
-CXXFLAGS = -std=c++20 -O2 -Wall -Wextra $(OMP_CXXFLAGS)
+# -g -fno-omit-frame-pointer: run.sh re-runs a crashed speedtest under
+# lldb/gdb; without frame pointers that backtrace is just "PC=0" (as in the
+# macos-intel dual-OpenMP crash). Negligible cost for a bench binary.
+CXXFLAGS = -std=c++20 -O2 -g -fno-omit-frame-pointer -Wall -Wextra $(OMP_CXXFLAGS)
 
 all: speedtest parallel_chol
 

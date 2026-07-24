@@ -29,11 +29,23 @@ endif
 # Compiler
 ###############################################################################
 ifeq ($(PLATFORM),macos)
-    HOMEBREW_GCC := $(shell which g++-15 2>/dev/null || which g++-14 2>/dev/null || which g++-13 2>/dev/null || which g++-12 2>/dev/null)
-    ifneq ($(HOMEBREW_GCC),)
-        CXX = $(HOMEBREW_GCC)
-    else
+    # Match the LIBRARY's toolchain: libstiles.dylib is built with clang +
+    # libomp (make.inc). Building the bench with Homebrew g++ loads a SECOND
+    # OpenMP runtime (libgomp) into the same process as the dylib's libomp —
+    # two OpenMP runtimes is undefined behavior, and it crashed the
+    # macos-intel-x86_64 CI lane (PC=0 segfaults in main + worker threads; ld
+    # even warned "duplicate libraries: -lgomp"). Homebrew g++ stays only as
+    # the fallback when no libomp keg exists to pair clang with.
+    BENCH_LIBOMP := $(shell brew --prefix libomp 2>/dev/null)
+    ifneq ($(strip $(BENCH_LIBOMP)),)
         CXX = clang++
+    else
+        HOMEBREW_GCC := $(shell which g++-15 2>/dev/null || which g++-14 2>/dev/null || which g++-13 2>/dev/null || which g++-12 2>/dev/null)
+        ifneq ($(HOMEBREW_GCC),)
+            CXX = $(HOMEBREW_GCC)
+        else
+            CXX = clang++
+        endif
     endif
 else
     CXX = g++
